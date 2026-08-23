@@ -104,7 +104,7 @@ def render(body: np.ndarray, path: str | Path, audio: np.ndarray | None = None,
     if path.suffix == ".gif":
         imageio.mimsave(path, frames[::2], duration=2.0 / out_fps, loop=0)
     else:
-        imageio.mimsave(path, frames, fps=out_fps, quality=7, macro_block_size=1)
+        imageio.mimsave(path, frames, fps=out_fps, quality=7, macro_block_size=2)
     return path
 
 

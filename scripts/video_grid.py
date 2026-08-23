@@ -75,7 +75,7 @@ def grid(motions: list[np.ndarray], labels: list[str], out: str | Path,
     if out.suffix == ".gif":
         imageio.mimsave(out, frames[::2], duration=2.0 / fps, loop=0)
     else:
-        imageio.mimsave(out, frames, fps=int(fps), quality=7, macro_block_size=1)
+        imageio.mimsave(out, frames, fps=int(fps), quality=7, macro_block_size=2)
     print("写出", out)
     return out
 
