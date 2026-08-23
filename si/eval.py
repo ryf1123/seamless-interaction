@@ -93,11 +93,20 @@ def _regress_forward(model, cond, spk, window: int) -> torch.Tensor:
 
 
 def fit_fgd_ae(ds: MotionData, dim: int, dev, iters: int = 400, seed: int = 0) -> MotionAE:
-    """在训练集上快速训一个动作自编码器，作为 FGD 的特征提取器。"""
+    """在训练集上快速训一个动作自编码器，作为 FGD 的特征提取器。
+
+    **所有 run 必须共用同一个自编码器**，否则各自的 FGD 落在不同的隐空间里，
+    数值之间没有可比性。所以这里按 (数据集, 目标, 窗口) 缓存到磁盘，只训一次。
+    """
+    cache = Path(ds.data_root) / f"fgd_ae_{ds.target}_{ds.window}.pt"
+    ae = MotionAE(dim).to(dev)
+    if cache.exists():
+        ae.load_state_dict(torch.load(cache, map_location=dev))
+        ae.eval()
+        return ae
     torch.manual_seed(seed)
     tr = MotionData(root=ds.data_root, split="train", window=ds.window,
                     audio_mode="env", text_mode="none", target=ds.target, stats=ds.stats)
-    ae = MotionAE(dim).to(dev)
     opt = torch.optim.Adam(ae.parameters(), 1e-3)
     from torch.utils.data import DataLoader
     dl = DataLoader(tr, batch_size=32, shuffle=True, drop_last=True)
@@ -111,6 +120,8 @@ def fit_fgd_ae(ds: MotionData, dim: int, dev, iters: int = 400, seed: int = 0) -
             loss = (ae(x) - x).abs().mean()
             opt.zero_grad(); loss.backward(); opt.step()
     ae.eval()
+    torch.save(ae.state_dict(), cache)
+    print(f"  FGD 自编码器训练完毕并缓存到 {cache}（所有 run 共用）")
     return ae
 
 
