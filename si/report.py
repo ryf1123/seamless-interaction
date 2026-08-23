@@ -23,6 +23,19 @@ METRICS = [("sem_acc", "语义命中率 ★", "↑", 100.0, "%"),
            ("beat_align", "节拍对齐", "↑", 1.0, ""),
            ("diversity", "多样性", "—", 1.0, " cm")]
 
+# 第六环（双人）的指标不一样：没有语义手势，主指标是反馈动作的时间对齐
+METRICS_DYADIC = [("backchannel_align", "反馈对齐 ★", "↑", 1.0, ""),
+                  ("fgd", "FGD", "↓", 1.0, ""),
+                  ("mpjpe_cm", "MPJPE", "↓", 1.0, " cm")]
+
+
+def metrics_for(rows: list[dict]):
+    """按 run 的类型挑指标，并给出主指标的随机基线（画图时标一条参考线）。"""
+    if rows and rows[0].get("dataset") == "dyadic":
+        return METRICS_DYADIC, None
+    base = 100.0 / len(rows[0]["classes"]) if rows and rows[0].get("classes") else None
+    return METRICS, base
+
 
 def load_curves(run: Path):
     tr, va = [], []
@@ -34,14 +47,16 @@ def load_curves(run: Path):
 
 def ablation_table(path: str | Path) -> str:
     rows = json.loads(Path(path).read_text())
-    head = "| 组 | 在问什么 | " + " | ".join(f"{n} {d}" for _, n, d, _, _ in METRICS) + " |"
-    sep = "|" + "-|" * (2 + len(METRICS))
+    metrics, _ = metrics_for(rows)
+    head = "| 组 | 在问什么 | " + " | ".join(f"{n} {d}" for _, n, d, _, _ in metrics) + " |"
+    sep = "|" + "-|" * (2 + len(metrics))
     lines = [head, sep]
     for r in rows:
         cells = []
-        for k, _, _, sc, unit in METRICS:
+        for k, _, _, sc, unit in metrics:
             v = r.get(k)
             cells.append("—" if v is None else f"{v*sc:.1f}{unit}" if k == "sem_acc"
+                         else f"{v*sc:.3f}{unit}" if k == "backchannel_align"
                          else f"{v*sc:.2f}{unit}")
         lines.append(f"| `{r['name']}` | {r['desc']} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
@@ -49,20 +64,28 @@ def ablation_table(path: str | Path) -> str:
 
 def ablation_figure(path: str | Path, out: str | Path) -> Path:
     rows = json.loads(Path(path).read_text())
+    metrics, base = metrics_for(rows)
     names = [r["name"].split("_", 1)[1] for r in rows]
-    fig, axes = plt.subplots(1, len(METRICS), figsize=(3.1 * len(METRICS), 3.6), dpi=110)
-    for ax, (k, label, arrow, sc, unit) in zip(axes, METRICS):
-        vals = [r.get(k, np.nan) * sc for r in rows]
-        star = k == "sem_acc"
+    fig, axes = plt.subplots(1, len(metrics), figsize=(3.1 * len(metrics), 3.6), dpi=110)
+    axes = np.atleast_1d(axes)
+    for ax, (k, label, arrow, sc, unit) in zip(axes, metrics):
+        vals = [(r.get(k) if r.get(k) is not None else np.nan) * sc for r in rows]
+        star = k in ("sem_acc", "backchannel_align")
         bars = ax.bar(range(len(vals)), vals,
                       color=["#1b5299" if star else "#8d99ae"] * len(vals))
-        if star:
-            ax.axhline(100 / len(rows[0]["classes"]), color="#d1495b", ls="--", lw=1.2)
-            ax.text(len(vals) - 0.4, 100 / len(rows[0]["classes"]) + 1.5, "随机基线",
+        if star and base is not None:
+            ax.axhline(base, color="#d1495b", ls="--", lw=1.2)
+            ax.text(len(vals) - 0.4, base + 1.5, "随机基线",
                     color="#d1495b", fontsize=8, ha="right")
+        if k == "backchannel_align" and rows[0].get("backchannel_align_gt") is not None:
+            g = float(np.mean([r["backchannel_align_gt"] for r in rows]))
+            ax.axhline(g, color="#2a9d8f", ls="--", lw=1.2)
+            ax.text(len(vals) - 0.4, g, " 真值上限", color="#2a9d8f", fontsize=8,
+                    ha="right", va="bottom")
         for b, v in zip(bars, vals):
-            ax.text(b.get_x() + b.get_width() / 2, v, f"{v:.1f}", ha="center",
-                    va="bottom", fontsize=8)
+            ax.text(b.get_x() + b.get_width() / 2, v,
+                    f"{v:.3f}" if k == "backchannel_align" else f"{v:.1f}",
+                    ha="center", va="bottom", fontsize=8)
         ax.set_xticks(range(len(names))); ax.set_xticklabels(names, rotation=30, fontsize=8)
         ax.set_title(f"{label} {arrow}", fontsize=10)
         ax.spines[["top", "right"]].set_visible(False)
