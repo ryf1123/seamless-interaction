@@ -59,13 +59,37 @@ def generate_clip(cfg, ds, enc, model, rec, dev, steps=25, cfg_w=1.5, seed=0,
     spk = d["spk"][None].to(dev)
     cond = enc(audio, wid, use_text=cfg["text_mode"] != "none")
     T = cond.shape[1]
-    g = torch.Generator(device=dev).manual_seed(seed)
-    if long or T > cfg["window"]:
+    if cfg["objective"] == "regress":
+        # 确定性回归：没有噪声也没有 ODE，直接一次前向。分段是为了不超位置编码长度。
+        out = _regress_forward(model, cond, spk, cfg["window"])
+    elif long or T > cfg["window"]:
         out = sample_long(model, cond, spk, clip_len=cfg["window"], overlap=8,
                           steps=steps, cfg=cfg_w)
     else:
+        g = torch.Generator(device=dev).manual_seed(seed)
         out = sample(model, cond, spk, steps=steps, cfg=cfg_w, generator=g)
     return ds.denorm(out[0].cpu().numpy()), d
+
+
+@torch.no_grad()
+def _regress_forward(model, cond, spk, window: int) -> torch.Tensor:
+    """回归模型的推理：x 输入全零、t 固定 1，超长时按窗口切开再拼（重叠处取平均）。"""
+    B, T, _ = cond.shape
+    if T <= window:
+        z = torch.zeros(B, T, model.motion_dim, device=cond.device)
+        return model(z, torch.ones(B, device=cond.device), cond, spk)
+    out = torch.zeros(B, T, model.motion_dim, device=cond.device)
+    cnt = torch.zeros(1, T, 1, device=cond.device)
+    for s in range(0, T, window // 2):
+        e = min(s + window, T)
+        if e - s < 8:
+            break
+        z = torch.zeros(B, e - s, model.motion_dim, device=cond.device)
+        out[:, s:e] += model(z, torch.ones(B, device=cond.device), cond[:, s:e], spk)
+        cnt[:, s:e] += 1
+        if e == T:
+            break
+    return out / cnt.clamp(min=1)
 
 
 def fit_fgd_ae(ds: MotionData, dim: int, dev, iters: int = 400, seed: int = 0) -> MotionAE:
