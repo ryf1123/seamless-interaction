@@ -62,17 +62,23 @@ class DyadicData(Dataset):
 
     # ------------------------------------------------------------- 特征
     def _load(self, rec) -> dict:
+        """只缓存动作和说话掩码。**原始音频不进缓存**——
+
+        一段 20 秒的对话有两路 22.05 kHz 音频，float32 就是 3.5 MB；
+        96 段训练对话全缓存住是 340 MB，和训练一起跑会把 16 GB 顶掉。
+        音频只用来算一次 Mel，算完就该扔。
+        """
         key = rec["id"][:-1]
         if key not in self._mem:
             d = np.load(self.root / rec["file"])
-            self._mem[key] = {k: d[k] for k in d.files}
+            self._mem[key] = {k: d[k] for k in d.files if not k.startswith("audio_")}
         return self._mem[key]
 
     def _mel(self, rec, who: str) -> np.ndarray:
         key = (rec["id"][:-1], who)
         if key not in self._mem:
-            d = self._load(rec)
-            self._mem[key] = log_mel(d[f"audio_{who}"], SR, rec["T"], self.fps)
+            with np.load(self.root / rec["file"]) as d:
+                self._mem[key] = log_mel(d[f"audio_{who}"], SR, rec["T"], self.fps)
         return self._mem[key]
 
     def _cond_raw(self, rec) -> np.ndarray:
