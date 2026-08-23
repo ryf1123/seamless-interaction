@@ -1,0 +1,15 @@
+# 和 configs/flow_body.yaml 完全一样，只把数据换成**多峰版**。
+# 多峰版里 45% 的语义词不做手势、23% 换手做、幅度有 ±35% 抖动，
+# 于是给定 (文本, 语音) 之后动作不再唯一：同一条件下的条件变异从 3.37 cm 涨到 15.12 cm
+# （语义峰值帧 2.32 → 25.12 cm）。见 notes/05。
+data: data/toy_multi
+target: body
+audio_mode: mel
+text_mode: seq
+objective: flow
+window: 120
+d_model: 256
+depth: 6
+steps: 5000
+batch: 32
+lr: 0.0003

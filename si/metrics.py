@@ -75,13 +75,19 @@ def diversity(samples: list[np.ndarray]) -> float:
 
 
 # ------------------------------------------------------------------ 语义命中
-def class_prototypes() -> np.ndarray:
-    """(13, n_upper, 3) 每个语义类别在峰值相位上的关节位置原型。"""
+def class_prototypes(mirrored: bool = False) -> np.ndarray:
+    """(13, n_upper, 3) 每个语义类别在峰值相位上的关节位置原型。
+
+    mirrored=True 给出左右互换的版本。数据里单手手势可以换手做
+    （`mirror_p`），换手之后还是同一个类别，所以判类时要对两套原型都比一遍。
+    """
+    from .gesture_expert import mirror_offset
     protos = []
     for c in SEMANTIC_CLASSES:
         off = _semantic_offset(c, np.array([0.5]))
-        ctrl = home_controls(1) + off
-        protos.append(joints(controls_to_body_feature(ctrl))[0, _UPPER])
+        if mirrored:
+            off = mirror_offset(off)
+        protos.append(joints(controls_to_body_feature(home_controls(1) + off))[0, _UPPER])
     return np.stack(protos)
 
 
@@ -104,9 +110,10 @@ def classify_pose(body: np.ndarray, frame: int) -> int:
     """
     global _PROTO
     if _PROTO is None:
-        _PROTO = class_prototypes()
+        _PROTO = np.stack([class_prototypes(False), class_prototypes(True)])  # (2,13,J,3)
     Q = joints(body[max(0, frame):max(0, frame) + 1])[0, _UPPER]
-    return int(np.linalg.norm(_PROTO - Q[None], axis=-1).mean(-1).argmin())
+    d = np.linalg.norm(_PROTO - Q[None, None], axis=-1).mean(-1)   # (2, 13)
+    return int(d.min(0).argmin())
 
 
 def prototype_separation() -> tuple[np.ndarray, np.ndarray, list[int]]:
@@ -114,10 +121,8 @@ def prototype_separation() -> tuple[np.ndarray, np.ndarray, list[int]]:
 
     这张表解释了 SemAcc 的分数结构：类别离得越开越容易判对。
     """
-    global _PROTO
-    if _PROTO is None:
-        _PROTO = class_prototypes()
-    D = np.linalg.norm(_PROTO[:, None] - _PROTO[None], axis=-1).mean(-1) * 100
+    P = class_prototypes()
+    D = np.linalg.norm(P[:, None] - P[None], axis=-1).mean(-1) * 100
     Dm = D.copy(); np.fill_diagonal(Dm, np.inf)
     return D, Dm.min(1), [int(i) for i in Dm.argmin(1)]
 
@@ -128,6 +133,8 @@ def semantic_accuracy(pred: np.ndarray,
     c2i = {c: i for i, c in enumerate(SEMANTIC_CLASSES)}
     pairs = []
     for e in events:
+        if e.get("omitted"):        # 这个词本来就没做手势，没什么可判的
+            continue
         f = min(int(e["peak_frame"]), len(pred) - 1)
         pairs.append((c2i[e["cls"]], classify_pose(pred, f)))
     if not pairs:

@@ -21,8 +21,14 @@ from .tts import SR, VOICES, prewarm, synthesize
 DATA_ROOT = Path("data")
 
 
+# 多峰版的三个旋钮。省略概率最重要：真人不会每个语义词都配手势，
+# 而且论文 §4.4.3 明说语义手势稀有长尾。见 notes/05。
+MULTIMODAL = dict(omit_p=0.45, mirror_p=0.40, amp_jitter=0.35)
+
+
 def build(n: int = 400, seed: int = 0, out: str | Path = "data/toy",
-          voices: list[str] | None = None, verbose: bool = True) -> Path:
+          voices: list[str] | None = None, verbose: bool = True,
+          multimodal: bool = False) -> Path:
     out = Path(out); (out / "clips").mkdir(parents=True, exist_ok=True)
     corpus = make_corpus(n, seed=seed)
     voices = voices or VOICES
@@ -35,7 +41,8 @@ def build(n: int = 400, seed: int = 0, out: str | Path = "data/toy",
     for i, c in enumerate(corpus):
         voice = voices[i % len(voices)]
         u = synthesize(c["id"], c["words"], c["tags"], voice, text=c["text"])
-        g = generate(u, seed=int(rng.integers(1 << 30)))
+        g = generate(u, seed=int(rng.integers(1 << 30)),
+                     **(MULTIMODAL if multimodal else {}))
         f = out / "clips" / f"{c['id']}.npz"
         np.savez_compressed(
             f, body=g["body"].astype(np.float16), face=g["face"].astype(np.float16),
@@ -62,7 +69,12 @@ def build(n: int = 400, seed: int = 0, out: str | Path = "data/toy",
         split[index[j]["id"]] = "train" if k < n_tr else ("val" if k < n_tr + n_va else "test")
     for r in index:
         r["split"] = split[r["id"]]
+    n_omit = sum(1 for r in index for e in r["events"] if e.get("omitted"))
+    n_mirror = sum(1 for r in index for e in r["events"] if e.get("mirrored"))
+    n_ev = sum(len(r["events"]) for r in index)
     meta = {"fps": FPS, "sr": SR, "n": len(index), "classes": SEMANTIC_CLASSES,
+            "multimodal": multimodal,
+            "n_events": n_ev, "n_omitted": n_omit, "n_mirrored": n_mirror,
             "total_frames": int(sum(r["T"] for r in index)),
             "total_seconds": float(sum(r["duration"] for r in index)),
             "clips": index}
@@ -70,6 +82,8 @@ def build(n: int = 400, seed: int = 0, out: str | Path = "data/toy",
     if verbose:
         print(f"写出 {out}  {meta['n']} 句 / {meta['total_frames']} 帧 / "
               f"{meta['total_seconds']/60:.1f} 分钟")
+        print(f"  语义事件 {n_ev}，其中省略 {n_omit}（{100*n_omit/max(n_ev,1):.0f}%）、"
+              f"换手 {n_mirror}（{100*n_mirror/max(n_ev,1):.0f}%）")
         for s in ("train", "val", "test"):
             print(f"  {s}: {sum(1 for r in index if r['split']==s)} 句")
     return out
@@ -86,4 +100,7 @@ def load_clip(root: str | Path, rec: dict) -> dict:
 
 if __name__ == "__main__":
     import sys
-    build(int(sys.argv[1]) if len(sys.argv) > 1 else 400)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    mm = "--multimodal" in sys.argv
+    build(int(args[0]) if args else 400,
+          out="data/toy_multi" if mm else "data/toy", multimodal=mm)

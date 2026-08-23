@@ -35,6 +35,14 @@ SUITES: dict[str, list[dict]] = {
         {"name": "d_audio", "desc": "Dyadic：自己 + 对方的语音", "partner": "audio"},
         {"name": "d_av", "desc": "AV Dyadic：再加上对方的动作", "partner": "av"},
     ],
+    # 第一环重跑：在**多峰版**数据上比生成式和确定性。
+    # 第一次在确定性版数据上跑得到的是「回归完胜」，但那是任务设计的问题——
+    # 那份数据给定条件后动作几乎唯一，回归已经贴着噪声底了。见 notes/05。
+    "objective_multi": [
+        {"name": "m_flow", "desc": "flow matching（生成式）· 多峰数据", "objective": "flow"},
+        {"name": "m_regress", "desc": "L1 回归（确定性）· 多峰数据", "objective": "regress",
+         "cond_dropout": 0.0},
+    ],
     # 第三环：音频表示
     "audio": [
         {"name": "a_mel", "desc": "80 维 log-Mel", "audio_mode": "mel"},
@@ -46,7 +54,8 @@ SUITES: dict[str, list[dict]] = {
 }
 
 
-BASE_CONFIG = {"dyadic": "configs/dyadic.yaml"}
+BASE_CONFIG = {"dyadic": "configs/dyadic.yaml",
+               "objective_multi": "configs/flow_body_multi.yaml"}
 
 
 def run_suite(suite: str, base_config: str = "configs/flow_body.yaml",

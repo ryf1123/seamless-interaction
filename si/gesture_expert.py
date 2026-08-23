@@ -19,7 +19,8 @@ from __future__ import annotations
 import numpy as np
 
 from .corpus import SEMANTIC_CLASSES
-from .pose import CONTROL_INDEX, NUM_CONTROLS, controls_to_body_feature, home_controls
+from .pose import (CONTROL_INDEX, CONTROL_NAMES, NUM_CONTROLS,
+                   controls_to_body_feature, home_controls)
 from .tts import SR, Utterance
 
 FPS = 30.0            # 动作帧率，和 Seamless Interaction 的视频一致
@@ -149,9 +150,40 @@ def _envelope(T: int, rise: int, fall: int) -> np.ndarray:
 
 
 # --------------------------------------------------------------------- 主流程
+def mirror_offset(off: np.ndarray) -> np.ndarray:
+    """把控制向量偏移左右互换（右手手势 → 左手手势）。"""
+    out = off.copy()
+    for name in CONTROL_NAMES:
+        if name.startswith("R_"):
+            out[:, CONTROL_INDEX[name]] = off[:, CONTROL_INDEX["L_" + name[2:]]]
+            out[:, CONTROL_INDEX["L_" + name[2:]]] = off[:, CONTROL_INDEX[name]]
+    for name in ("spine_yaw", "spine_roll", "neck_yaw", "neck_roll"):
+        out[:, CONTROL_INDEX[name]] = -off[:, CONTROL_INDEX[name]]
+    return out
+
+
 def generate(u: Utterance, seed: int = 0, idle_scale: float = 1.0,
-             beat_scale: float = 1.0, semantic_scale: float = 1.0) -> dict:
-    """把一条 Utterance 变成动作。返回 body/face 特征和全部中间量（教学用）。"""
+             beat_scale: float = 1.0, semantic_scale: float = 1.0,
+             omit_p: float = 0.0, mirror_p: float = 0.0,
+             amp_jitter: float = 0.0) -> dict:
+    """把一条 Utterance 变成动作。返回 body/face 特征和全部中间量（教学用）。
+
+    后三个参数控制**这个任务到底是不是多对多的**，默认全 0（确定性版本）。
+
+    这件事是被数据打脸打出来的：第一版数据里，给定 (文本, 语音) 之后动作几乎唯一
+    （同一句换随机种子，动作两两只差 3.37 cm），于是「co-speech gesture 是多对多映射，
+    所以生成式必然赢过确定性回归」这个前提根本不成立——实测确定性 L1 回归
+    SemAcc 98.5% / MPJPE 3.86 cm（已经贴着 3.37 cm 的噪声底），
+    而 flow matching 只有 64.2% / 11.21 cm，生成的变异还是真实变异的 28 倍。
+
+    要让这个对照有意义，得让同一份条件真的对应多种合理动作：
+
+      omit_p     语义词有多大概率**不做手势**。真人不会每个语义词都配手势，
+                 而且 Seamless Interaction §4.4.3 明说语义手势是稀有长尾的。
+                 这是多峰性最大的来源。
+      mirror_p   单手手势有多大概率换成左手做。
+      amp_jitter 手势幅度的乘性抖动（±比例）。
+    """
     rng = np.random.default_rng(seed)
     T = max(2, int(round(u.duration * FPS)))
     env = audio_envelope(u.audio, T)
@@ -200,15 +232,27 @@ def generate(u: Utterance, seed: int = 0, idle_scale: float = 1.0,
         b = min(T, int(round((we + TAIL_S) * FPS)))
         if b - a < 6:
             continue
+        if rng.random() < omit_p:                # 这个词就是不做手势
+            events.append({"word_index": i, "word": u.words[i], "cls": tag,
+                           "frame_start": a, "frame_end": b,
+                           "peak_frame": (a + b) // 2, "omitted": True,
+                           "mirrored": False})
+            continue
         n = b - a
         phase = np.linspace(0, 1, n)
         off = _semantic_offset(tag, phase) * semantic_scale
+        mirrored = rng.random() < mirror_p
+        if mirrored:
+            off = mirror_offset(off)
+        if amp_jitter:
+            off = off * (1.0 + rng.uniform(-amp_jitter, amp_jitter))
         envg = _envelope(n, rise=max(3, int(0.18 * FPS)), fall=max(3, int(0.22 * FPS)))
         sem[a:b] = sem[a:b] * (1 - envg[:, None]) + off * envg[:, None]
         w_sem[a:b] = np.maximum(w_sem[a:b], envg)
         events.append({"word_index": i, "word": u.words[i], "cls": tag,
                        "frame_start": a, "frame_end": b,
-                       "peak_frame": a + int(np.argmax(envg))})
+                       "peak_frame": a + int(np.argmax(envg)),
+                       "omitted": False, "mirrored": bool(mirrored)})
 
     ctrl = home_controls(T) + idle + beat * (1 - w_sem[:, None]) + sem
     body = controls_to_body_feature(ctrl)
