@@ -8,6 +8,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+import zlib
+
 from .dataset import load_index
 from .features import (SpeechTokenizer, build_word_vocab, energy, log_mel,
                        semantic_class_track, text_word_ids)
@@ -101,8 +103,12 @@ class MotionData(Dataset):
         T = rec["T"]
         motion = self.norm(self._motion(rec))
         audio = (self._audio_feat(rec) - self.stats["a_mean"]) / self.stats["a_std"]
+        # 用 crc32 而不是内置 hash()：Python 的字符串 hash 是**逐进程随机化**的
+        # （PYTHONHASHSEED），训练进程和评测进程会算出不同的种子，
+        # 于是 text_mode=shuffle 在训练和评测时用的是两套不同的词序排列。
+        # 结论不受影响（模型看不到 clip id，学不到具体排列），但实验不可复现。
         ids = text_word_ids(rec, self.vocab, T, self.fps, self.text_mode,
-                            np.random.default_rng(abs(hash(rec["id"])) % (1 << 31)))
+                            np.random.default_rng(zlib.crc32(rec["id"].encode())))
         return {"motion": torch.from_numpy(motion).float(),
                 "audio": torch.from_numpy(audio).float(),
                 "word_ids": torch.from_numpy(ids).long(),
