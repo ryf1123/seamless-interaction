@@ -26,7 +26,8 @@ from .flow import make_noisy
 from .models.dit import CondEncoder, MotionDiT
 
 DEFAULTS = dict(
-    data="data/toy", target="body", window=120, audio_mode="mel", text_mode="seq",
+    data="data/toy", dataset="toy", partner="audio",
+    target="body", window=120, audio_mode="mel", text_mode="seq",
     objective="flow", d_model=256, depth=6, heads=4, d_cond=128, d_word=64,
     n_tokens=200, steps=8000, batch=32, lr=3e-4, warmup=200, cond_dropout=0.2,
     weight_decay=0.0, log_every=100, val_every=500, seed=0, device="mps",
@@ -43,6 +44,8 @@ def get_device(name: str) -> torch.device:
 
 
 def build_all(cfg: dict):
+    if cfg["dataset"] == "dyadic":
+        return _build_dyadic(cfg)
     tok = build_tokenizer(cfg["data"], cfg["n_tokens"]) if cfg["audio_mode"] == "token" else None
     kw = dict(root=cfg["data"], window=cfg["window"], audio_mode=cfg["audio_mode"],
               text_mode=cfg["text_mode"], target=cfg["target"], tokenizer=tok)
@@ -56,6 +59,18 @@ def build_all(cfg: dict):
                       cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8,
                       n_speakers=n_spk)
     return tr, va, enc, model, tok
+
+
+def _build_dyadic(cfg: dict):
+    """双人这一环：条件是「自己的 Mel | 对方的 Mel | 对方的动作」，不用文本。"""
+    from .dyadic_data import DyadicData
+    kw = dict(root=cfg["data"], window=cfg["window"], partner=cfg["partner"])
+    tr = DyadicData(split="train", **kw)
+    va = DyadicData(split="val", stats=tr.stats, **kw)
+    enc = CondEncoder(tr.cond_dim, 2, cfg["d_cond"], cfg["d_word"], n_tokens=0)
+    model = MotionDiT(tr[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
+                      cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8, n_speakers=2)
+    return tr, va, enc, model, None
 
 
 def loss_fn(cfg, model, enc, batch, dev, gen=None):
@@ -96,11 +111,15 @@ def train(cfg: dict, name: str) -> Path:
     tr, va, enc, model, tok = build_all(cfg)
     enc.to(dev); model.to(dev)
     n_par = model.n_params + sum(p.numel() for p in enc.parameters())
+    tag = (f"partner={cfg['partner']}" if cfg["dataset"] == "dyadic"
+           else f"audio={cfg['audio_mode']} text={cfg['text_mode']}")
     print(f"[{name}] {dev}  参数 {n_par/1e6:.2f}M  训练窗口 {len(tr)}  验证窗口 {len(va)}  "
-          f"audio={cfg['audio_mode']} text={cfg['text_mode']} obj={cfg['objective']}")
+          f"{tag} obj={cfg['objective']}")
     (run / "config.yaml").write_text(yaml.safe_dump(cfg, allow_unicode=True))
     np.savez(run / "stats.npz", **tr.stats)
     (run / "vocab.json").write_text(json.dumps(tr.vocab))
+    if cfg["dataset"] == "dyadic":
+        (run / "dyadic").write_text(cfg["partner"])
     if tok is not None:
         np.save(run / "tokenizer.npy", tok.centroids)
 

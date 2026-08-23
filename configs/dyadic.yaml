@@ -1,0 +1,13 @@
+# 第六环：双人。条件 = 自己的 Mel | 对方的 Mel | 对方的动作（按 partner 开关取舍）
+dataset: dyadic
+data: data/dyadic
+partner: audio        # none（Monadic）/ audio（Dyadic）/ av（AV Dyadic）
+target: body
+objective: flow
+text_mode: none       # 这一环不用文本条件
+window: 120
+d_model: 256
+depth: 6
+steps: 6000
+batch: 32
+lr: 0.0003

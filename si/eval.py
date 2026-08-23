@@ -30,6 +30,9 @@ from .train import get_device
 def load_run(run: str | Path, ckpt: str = "best.pt"):
     run = Path(run)
     cfg = yaml.safe_load((run / "config.yaml").read_text())
+    cfg.setdefault("dataset", "toy"); cfg.setdefault("partner", "audio")
+    if cfg["dataset"] == "dyadic":
+        return _load_dyadic(run, cfg, ckpt)
     vocab = json.loads((run / "vocab.json").read_text())
     stats = {k: v for k, v in np.load(run / "stats.npz").items()}
     tok = None
@@ -46,6 +49,19 @@ def load_run(run: str | Path, ckpt: str = "best.pt"):
     n_spk = max(r["speaker_id"] for r in ds.all_recs) + 1
     model = MotionDiT(ds[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
                       cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8, n_speakers=n_spk)
+    model.load_state_dict(ck["model"]); enc.load_state_dict(ck["enc"])
+    return cfg, ds, enc, model
+
+
+def _load_dyadic(run: Path, cfg: dict, ckpt: str):
+    from .dyadic_data import DyadicData
+    stats = {k: v for k, v in np.load(run / "stats.npz").items()}
+    ds = DyadicData(root=cfg["data"], split="test", window=cfg["window"],
+                    partner=cfg["partner"], stats=stats)
+    ck = torch.load(run / ckpt, map_location="cpu", weights_only=False)
+    enc = CondEncoder(ds.cond_dim, 2, cfg["d_cond"], cfg["d_word"], n_tokens=0)
+    model = MotionDiT(ds[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
+                      cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8, n_speakers=2)
     model.load_state_dict(ck["model"]); enc.load_state_dict(ck["enc"])
     return cfg, ds, enc, model
 
@@ -99,14 +115,21 @@ def fit_fgd_ae(ds: MotionData, dim: int, dev, iters: int = 400, seed: int = 0) -
     数值之间没有可比性。所以这里按 (数据集, 目标, 窗口) 缓存到磁盘，只训一次。
     """
     cache = Path(ds.data_root) / f"fgd_ae_{ds.target}_{ds.window}.pt"
+    cache.parent.mkdir(parents=True, exist_ok=True)
     ae = MotionAE(dim).to(dev)
     if cache.exists():
         ae.load_state_dict(torch.load(cache, map_location=dev))
         ae.eval()
         return ae
     torch.manual_seed(seed)
-    tr = MotionData(root=ds.data_root, split="train", window=ds.window,
-                    audio_mode="env", text_mode="none", target=ds.target, stats=ds.stats)
+    if type(ds).__name__ == "DyadicData":
+        from .dyadic_data import DyadicData
+        tr = DyadicData(root=ds.data_root, split="train", window=ds.window,
+                        partner="none", stats=ds.stats)
+    else:
+        tr = MotionData(root=ds.data_root, split="train", window=ds.window,
+                        audio_mode="env", text_mode="none", target=ds.target,
+                        stats=ds.stats)
     opt = torch.optim.Adam(ae.parameters(), 1e-3)
     from torch.utils.data import DataLoader
     dl = DataLoader(tr, batch_size=32, shuffle=True, drop_last=True)
@@ -125,9 +148,59 @@ def fit_fgd_ae(ds: MotionData, dim: int, dev, iters: int = 400, seed: int = 0) -
     return ae
 
 
+def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
+                    device: str = "mps", max_clips: int | None = None,
+                    ckpt: str = "best.pt") -> dict:
+    """第六环的评测：主指标是**反馈动作的时间对齐**。
+
+    倾听时自己的音轨是静音的，所以 partner=none 组在信息上不可能对齐——
+    这一组的分数就是这个指标的下限。
+    """
+    from .dyadic_data import backchannel_alignment
+    dev = get_device(device)
+    cfg, ds, enc, model = load_run(run, ckpt)
+    enc.to(dev).eval(); model.to(dev).eval()
+    recs = ds.recs if max_clips is None else ds.recs[:max_clips]
+    ae = fit_fgd_ae(ds, ds[0]["motion"].shape[-1], dev)
+    rows, fp, fg = [], [], []
+    for i, rec in enumerate(recs):
+        gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w, seed=i)
+        gt = ds.denorm(d["motion"].numpy())
+        clip = np.load(Path(cfg["data"]) / rec["file"])
+        listen = ~clip[f"speak_{rec['side']}"]
+        ev = rec["back_events"][rec["side"]]
+        a, n_pred, n_gt = backchannel_alignment(gen, ev, listen)
+        a_gt = backchannel_alignment(gt, ev, listen)[0]
+        rows.append({"id": rec["id"], "align": a, "align_gt": a_gt,
+                     "n_pred_nod": n_pred, "n_gt_nod": n_gt,
+                     "mpjpe_cm": mpjpe_cm(gen, gt)})
+        with torch.no_grad():
+            for arr, bucket in ((ds.norm(gen), fp), (d["motion"].numpy(), fg)):
+                W, S = ds.window, max(1, ds.window // 2)
+                for st in range(0, max(1, len(arr) - W + 1), S):
+                    seg = arr[st:st + W]
+                    if len(seg) >= 32:
+                        bucket.append(ae.encode(torch.tensor(seg)[None].float()
+                                                .to(dev))[0].cpu().numpy())
+    ok = [r for r in rows if not np.isnan(r["align"])]
+    out = {"run": str(run), "n_clips": len(rows), "dataset": "dyadic",
+           "partner": cfg["partner"], "objective": cfg["objective"],
+           "fgd": frechet(np.stack(fp), np.stack(fg)),
+           "mpjpe_cm": float(np.mean([r["mpjpe_cm"] for r in rows])),
+           "backchannel_align": float(np.mean([r["align"] for r in ok])),
+           "backchannel_align_gt": float(np.mean([r["align_gt"] for r in ok])),
+           "n_gt_nod": int(sum(r["n_gt_nod"] for r in rows)),
+           "n_pred_nod": int(sum(r["n_pred_nod"] for r in rows)),
+           "per_clip": rows}
+    Path(run, "eval.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
+    return out
+
+
 def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 3,
              device: str = "mps", max_clips: int | None = None,
              long: bool = False, ckpt: str = "best.pt") -> dict:
+    if yaml.safe_load(Path(run, "config.yaml").read_text()).get("dataset") == "dyadic":
+        return evaluate_dyadic(run, steps, cfg_w, device, max_clips, ckpt)
     dev = get_device(device)
     cfg, ds, enc, model = load_run(run, ckpt)
     enc.to(dev).eval(); model.to(dev).eval()
@@ -192,6 +265,14 @@ def main():
     a = ap.parse_args()
     r = evaluate(a.run, steps=a.steps, cfg_w=a.cfg, max_clips=a.max_clips,
                  long=a.long, ckpt=a.ckpt)
+    if r.get("dataset") == "dyadic":
+        print(f"\n{'='*62}\n{r['run']}  (partner={r['partner']})")
+        print(f"  FGD              {r['fgd']:8.3f}   ↓")
+        print(f"  MPJPE            {r['mpjpe_cm']:8.2f} cm ↓")
+        print(f"  反馈动作对齐 ★    {r['backchannel_align']:8.3f}   ↑   "
+              f"(真值 {r['backchannel_align_gt']:.3f})")
+        print(f"  生成的点头 {r['n_pred_nod']} 个 / 真值 {r['n_gt_nod']} 个")
+        return
     print(f"\n{'='*62}\n{r['run']}  ({r['audio_mode']} / {r['text_mode']} / {r['objective']})")
     print(f"  FGD          {r['fgd']:8.3f}   ↓")
     print(f"  MPJPE        {r['mpjpe_cm']:8.2f} cm ↓")

@@ -78,12 +78,16 @@ def listening_motion(partner_env: np.ndarray, T: int, rng: np.random.Generator,
         # 点头：一到两下，幅度 0.10–0.20 rad
         k = 1 if rng.random() < 0.65 else 2
         amp = rng.uniform(0.10, 0.20)
-        off[a:b, CONTROL_INDEX["neck_pitch"]] += amp * (1 - np.cos(2 * np.pi * k * p)) / 2
+        curve = amp * (1 - np.cos(2 * np.pi * k * p)) / 2
+        off[a:b, CONTROL_INDEX["neck_pitch"]] += curve
         off[a:b, CONTROL_INDEX["spine_pitch"]] += 0.35 * amp * np.sin(np.pi * p)
         if rng.random() < 0.3:                       # 偶尔配一个轻微耸肩
             off[a:b, CONTROL_INDEX["shoulder_shrug"]] += 0.10 * np.sin(np.pi * p)
+        # 记录**峰值帧**而不是起始帧：点头的最低点比触发点晚约 n/(2k) 帧，
+        # 用起始帧当参照会让真值自己的对齐分只有 0.47，指标就没有上限可言了。
         events.append({"frame": int(f), "kind": kind, "n_nod": k,
-                       "amp": float(amp), "frame_end": int(b)})
+                       "amp": float(amp), "frame_end": int(b),
+                       "peak_frame": int(a + int(np.argmax(curve)))})
     return off, events
 
 

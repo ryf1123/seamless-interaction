@@ -29,6 +29,12 @@ SUITES: dict[str, list[dict]] = {
         {"name": "o_regress", "desc": "L1 回归（确定性）", "objective": "regress",
          "cond_dropout": 0.0},
     ],
+    # 第六环：对方的信息有没有用（论文表 14 的 Monadic / Dyadic / AV Dyadic）
+    "dyadic": [
+        {"name": "d_none", "desc": "Monadic：只给自己的语音", "partner": "none"},
+        {"name": "d_audio", "desc": "Dyadic：自己 + 对方的语音", "partner": "audio"},
+        {"name": "d_av", "desc": "AV Dyadic：再加上对方的动作", "partner": "av"},
+    ],
     # 第三环：音频表示
     "audio": [
         {"name": "a_mel", "desc": "80 维 log-Mel", "audio_mode": "mel"},
@@ -40,10 +46,14 @@ SUITES: dict[str, list[dict]] = {
 }
 
 
+BASE_CONFIG = {"dyadic": "configs/dyadic.yaml"}
+
+
 def run_suite(suite: str, base_config: str = "configs/flow_body.yaml",
               steps: int = 6000, eval_steps: int = 25, skip_done: bool = True,
               extra: list[str] | None = None) -> Path:
     items = SUITES[suite]
+    base_config = BASE_CONFIG.get(suite, base_config)
     results = []
     for it in items:
         name = f"{suite}_{it['name']}"
