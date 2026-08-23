@@ -24,59 +24,80 @@ from si.metrics import _UPPER, joints  # noqa: E402
 from si.train import get_device  # noqa: E402
 
 
-def seam_jerk(body: np.ndarray, seam: int, half: int = 6) -> float:
-    """接缝处的速度突变：|v[seam] − 邻域中位速度|，单位 cm/帧。"""
+def seam_spike(body: np.ndarray, seam: int, half: int = 3) -> float:
+    """接缝处的**加速度尖峰比**：接缝附近的最大 |Δv| ÷ 全段 |Δv| 的中位数。
+
+    比「某一帧的速度和邻域中位数差多少」稳健得多。生成式模型每一帧都不一样，
+    单帧统计量的方差比要测的效应本身还大——第一版就是这么翻车的：
+    同一条句子上 overlap=0/4/8/16 量出 5.78 / 0.90 / 7.31 / 3.55，完全没有规律。
+
+    比值 ≈ 1 表示接缝处的加速度和别处没区别（看不出接缝）；≫ 1 表示有可见的顿挫。
+    """
     P = joints(body)[:, _UPPER]
     v = np.linalg.norm(np.diff(P, axis=0), axis=-1).mean(-1) * 100
-    a = max(0, seam - half); b = min(len(v), seam + half)
-    local = np.concatenate([v[a:max(a, seam - 1)], v[min(b, seam + 1):b]])
-    if local.size == 0 or seam >= len(v):
+    dv = np.abs(np.diff(v))
+    if seam >= len(dv) - half or len(dv) < 20:
         return float("nan")
-    return float(abs(v[seam] - np.median(local)))
+    local = dv[max(0, seam - half):seam + half + 1].max()
+    return float(local / max(np.median(dv), 1e-6))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="runs/flow_body")
     ap.add_argument("--steps", type=int, default=25)
+    ap.add_argument("--n-clips", type=int, default=8)
     a = ap.parse_args()
 
     cfg, ds, enc, model = load_run(a.run)
     dev = get_device("mps"); enc.to(dev).eval(); model.to(dev).eval()
     W = cfg["window"]
-    # 挑一条明显长于训练窗口的句子
-    rec = max(ds.recs, key=lambda r: r["T"])
-    T = rec["T"]
-    print(f"句子：「{rec['text']}」  T = {T} 帧，训练窗口 W = {W}")
-    d = ds.full_clip(rec)
-    with torch.no_grad():
-        cond = enc(d["audio"][None].to(dev), d["word_ids"][None].to(dev),
-                   use_text=cfg["text_mode"] != "none")
-    spk = d["spk"][None].to(dev)
-    gt = ds.denorm(d["motion"].numpy())[:, :258]
-
     overlaps = [0, 4, 8, 16]
-    outs, jerks = {}, {}
-    for ov in overlaps:
+    # 所有明显长于训练窗口的测试句，全都跑一遍取平均——单条样本的方差比效应还大
+    longs = sorted([r for r in ds.recs if r["T"] > W + 25],
+                   key=lambda r: -r["T"])[:a.n_clips]
+    print(f"训练窗口 W = {W}，用 {len(longs)} 条长句（T = "
+          f"{min(r['T'] for r in longs)}–{max(r['T'] for r in longs)} 帧）")
+    per = {ov: [] for ov in overlaps}
+    base_all = []
+    outs = {}
+    for k, rec in enumerate(longs):
+        d = ds.full_clip(rec)
         with torch.no_grad():
-            x = sample_long(model, cond, spk, clip_len=W, overlap=ov, steps=a.steps, cfg=1.5)
-        m = ds.denorm(x[0].cpu().numpy())[:, :258]
-        outs[ov] = m
-        # 第一段是 [0, W)，之后 pos = W-ov 但前 ov 帧被钉住，
-        # 所以「新内容真正开始」的位置对所有 overlap 都是第 W 帧
-        jerks[ov] = seam_jerk(m, W)
-        print(f"  overlap={ov:2d}  接缝在第 {W} 帧  速度突变 {jerks[ov]:.2f} cm/帧")
-    # 真值在同一位置的"突变"当参考底线
-    base = np.median([seam_jerk(gt, s) for s in range(W - 20, W + 20)])
-    print(f"  真值在同一带的典型速度波动：{base:.2f} cm/帧")
+            cond = enc(d["audio"][None].to(dev), d["word_ids"][None].to(dev),
+                       use_text=cfg["text_mode"] != "none")
+        spk = d["spk"][None].to(dev)
+        gt_k = ds.denorm(d["motion"].numpy())[:, :258]
+        for ov in overlaps:
+            with torch.no_grad():
+                x = sample_long(model, cond, spk, clip_len=W, overlap=ov,
+                                steps=a.steps, cfg=1.5)
+            m = ds.denorm(x[0].cpu().numpy())[:, :258]
+            per[ov].append(seam_spike(m, W))
+            # 参照物必须是**同一条生成**里的非接缝位置，
+            # 否则就是在拿生成动作的抖动去比真值动作的平滑，量的是别的东西
+            other = [p for p in range(25, len(m) - 25) if abs(p - W) > 12]
+            base_all += [seam_spike(m, p) for p in other[::7]]
+            if k == 0:
+                outs[ov] = m
+                rec0, gt, T = rec, gt_k, rec["T"]
+    jerks = {ov: float(np.nanmean(per[ov])) for ov in overlaps}
+    sems = {ov: float(np.nanstd(per[ov]) / np.sqrt(len(per[ov]))) for ov in overlaps}
+    base = float(np.nanmedian(base_all))
+    for ov in overlaps:
+        print(f"  overlap={ov:2d}  接缝加速度尖峰比 {jerks[ov]:.2f} ± {sems[ov]:.2f}"
+              f"  （{len(per[ov])} 条平均）")
+    print(f"  同一批生成里**非接缝位置**的尖峰比中位数（参考底线）：{base:.2f}"
+          f"  （{len(base_all)} 个采样点）")
+    rec = rec0
 
     P = {k: joints(v)[:, _UPPER] for k, v in outs.items()}
     Pg = joints(gt)[:, _UPPER]
     vel = {k: np.linalg.norm(np.diff(v, axis=0), axis=-1).mean(-1) * 100 for k, v in P.items()}
     vg = np.linalg.norm(np.diff(Pg, axis=0), axis=-1).mean(-1) * 100
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 7.4),
-                             gridspec_kw={"height_ratios": [1.5, 1.0]})
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8.2),
+                             gridspec_kw={"height_ratios": [1.5, 1.0], "hspace": 0.42})
     ax = axes[0]
     ax.plot(vg, color=GRAY, lw=1.2, label="真值")
     for ov, c in zip(overlaps, [RED, ORANGE, GREEN, BLUE]):
@@ -86,24 +107,31 @@ def main():
     ax.set_xlim(W - 45, min(len(vg), W + 45))
     ax.set_xlabel("帧"); ax.set_ylabel("平均关节速度 (cm/帧)")
     ax.legend(fontsize=8, ncol=5)
-    ax.set_title(f"① 接缝附近的速度曲线（黑虚线是接缝，训练窗口 W={W}）",
-                 fontsize=10.5, loc="left")
+    jg = np.median(np.abs(np.diff(vel[8]))); jt = np.median(np.abs(np.diff(vg)))
+    ax.set_title(f"① 接缝附近的速度曲线（黑虚线是接缝，训练窗口 W={W}）。"
+                 f"注意生成（彩色）比真值（灰）抖得多——全段都抖，不只是接缝："
+                 f"|Δv| 中位数 {jg:.2f} vs {jt:.2f} cm/帧，差 {jg/jt:.0f} 倍",
+                 fontsize=10, loc="left")
 
     ax = axes[1]
     xs = np.arange(len(overlaps))
     vals = [jerks[o] for o in overlaps]
-    bars = ax.bar(xs, vals, color=[RED, ORANGE, GREEN, BLUE])
+    bars = ax.bar(xs, vals, yerr=[sems[o] for o in overlaps], capsize=4,
+                  color=[RED, ORANGE, GREEN, BLUE])
     ax.axhline(base, color=GRAY, ls="--", lw=1.2)
-    ax.text(len(xs) - 0.4, base, f" 真值的典型波动 {base:.1f}", fontsize=8,
+    ax.text(len(xs) - 0.4, base, f" 非接缝位置的尖峰比 {base:.2f}", fontsize=8,
             color=GRAY, va="bottom", ha="right")
     for b, v in zip(bars, vals):
         ax.text(b.get_x() + b.get_width() / 2, v, f"{v:.2f}", ha="center",
                 va="bottom", fontsize=9)
     ax.set_xticks(xs); ax.set_xticklabels([f"overlap={o}" for o in overlaps])
-    ax.set_ylabel("接缝速度突变 (cm/帧)")
+    ax.set_ylabel("接缝加速度尖峰比")
     ax.set_title("② overlap 要多大才够：0 是纯拼接（无 outpainting），"
-                 "其余是把开头若干帧钉成上一段结尾", fontsize=10.5, loc="left")
-    fig.suptitle(f"FOPPAS：分段生成 {T} 帧的长序列，接缝有多明显", fontsize=12.5)
+                 "其余是把开头若干帧钉成上一段结尾。\n"
+                 "虚线是同一批生成里非接缝位置的水平——柱子落在虚线附近就说明接缝看不出来",
+                 fontsize=10, loc="left")
+    fig.suptitle(f"FOPPAS：分段生成长于训练窗口的序列，接缝有多明显"
+                 f"（{len(longs)} 条长句平均）", fontsize=12.5)
     save(fig, "06_foppas.png")
 
     from scripts.video_grid import grid
