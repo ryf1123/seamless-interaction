@@ -80,7 +80,22 @@ python -m si.corpus            # 语料和 13 个语义类别的分布
 python -m si.tts               # 逐词合成 + 词级对齐表
 python -m si.gesture_expert    # 一条句子的三路分解
 python -m si.render            # 渲染一段带音轨的演示视频
+python -m si.dyadic            # 打印一段双人对话的结构
 python scripts/walkthrough.py  # 把整条链路的形状和数值打印一遍
+python scripts/selfcheck.py    # 跑一遍所有不变量（改了表示层/专家/指标之后先跑这个）
+```
+
+## 双人（dyadic）
+
+Seamless Interaction 的核心设定是条件里带上**对话者**的语音。
+本项目把它做成了可证伪的版本：**倾听方的点头完全由对方的语音触发，
+而倾听时自己那一路音轨是静音的** —— 所以只给自己的语音，模型不可能生成出这些点头。
+
+![dyadic](docs/figs/08_dyadic.png)
+
+```bash
+python -m si.dyadic build 120     # 120 段对话 / 41.4 分钟 / 1825 个反馈动作，14 秒
+python scripts/explain_dyadic.py  # 出上面这张图
 ```
 
 ## 指标
@@ -140,5 +155,5 @@ notes/                每一环一页笔记
 | 3 | 语音表示（Mel / 离散 token / 包络 / 无） | 🔄 |
 | 4 | 长序列 FOPPAS | ✅ 一测：接缝测不出来，因为生成本身就抖；顺序改成先压抖动 |
 | 5 | 表情 + 手势：联合 vs 级联，单向信息流 | ⬜ |
-| 6 | 双人（dyadic）条件 | ⬜ |
+| 6 | 双人（dyadic）条件：倾听时的点头只能由对方的语音解释 | 🟡 数据侧就绪（120 段对话 / 41.4 分钟 / 1825 个反馈动作），训练待跑 |
 | 7 | 泛化边界 | ⬜ |

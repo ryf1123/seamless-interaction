@@ -96,6 +96,21 @@ def main():
     except FileNotFoundError:
         print("  [跳过] data/toy 不存在，先跑 `python -m si.dataset 400`")
 
+    print("\n双人数据")
+    from si.dyadic import build_conversation, listening_motion, partner_pauses
+    from si.corpus import make_corpus as _mc
+    conv = build_conversation(_mc(4), ("Samantha", "Daniel"), seed=0)
+    for si_, name in ((0, "A"), (1, "B")):
+        listen = ~conv["speak"][si_]
+        ev = conv["back_events"][si_]
+        inside = all(listen[min(e["frame"], conv["T"] - 1)] for e in ev)
+        check(f"{name} 的反馈动作全部发生在**自己不说话**时", inside,
+              f"{len(ev)} 个事件")
+        # 关键不变量：倾听时自己那一路必须是静音的，
+        # 否则「反馈动作只能由对方语音解释」这句话就不成立
+        q = conv["env"][si_][listen].max() if listen.any() else 0.0
+        check(f"{name} 倾听时自己的音轨接近静音", q < 0.25, f"最大包络 {q:.3f}")
+
     print("\n采样")
     import torch
     from si.flow import make_noisy, sample_long
