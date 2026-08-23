@@ -146,9 +146,14 @@ def confusion(pairs: list[tuple[int, int]]) -> np.ndarray:
 
 # ------------------------------------------------------------------------ FGD
 class MotionAE(nn.Module):
-    """给 FGD 用的小动作自编码器：1D 卷积下采样到 32 维隐向量。"""
+    """给 FGD 用的小动作自编码器：1D 卷积下采样到 16 维隐向量。
 
-    def __init__(self, dim: int, d: int = 128, z: int = 32):
+    隐维度取 16 而不是 32，是因为 Fréchet 距离要估一个 z×z 的协方差矩阵，
+    样本数必须远大于 z。测试集只有 40 句，按窗口切开也就一百多个样本——
+    32 维时协方差是欠定的，算出来的 FGD 方差极大（实测同一批模型能差十几倍）。
+    """
+
+    def __init__(self, dim: int, d: int = 128, z: int = 16):
         super().__init__()
         self.enc = nn.Sequential(
             nn.Conv1d(dim, d, 5, 2, 2), nn.GELU(),

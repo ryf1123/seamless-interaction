@@ -151,9 +151,17 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
                      "beat_align_gt": beat_align(body_g, ab),
                      "diversity": diversity(samples),
                      "sem_acc": acc, "n_events": len(rec["events"])})
+        # FGD 的特征按**窗口**取而不是按整句取：40 句只有 40 个样本，
+        # 估 16×16 的协方差都嫌少；切成窗口能拿到一百多个。
         with torch.no_grad():
-            feats_p.append(ae.encode(torch.tensor(ds.norm(gen))[None].float().to(dev))[0].cpu().numpy())
-            feats_g.append(ae.encode(d["motion"][None].to(dev))[0].cpu().numpy())
+            for arr, bucket in ((ds.norm(gen), feats_p), (d["motion"].numpy(), feats_g)):
+                W, S = ds.window, max(1, ds.window // 2)
+                for st in range(0, max(1, len(arr) - W + 1), S):
+                    seg = arr[st:st + W]
+                    if len(seg) < 32:
+                        continue
+                    bucket.append(ae.encode(
+                        torch.tensor(seg)[None].float().to(dev))[0].cpu().numpy())
     fgd = frechet(np.stack(feats_p), np.stack(feats_g))
     ok = [r for r in rows if not np.isnan(r["sem_acc"])]
     out = {"run": str(run), "n_clips": len(rows), "fgd": fgd,
