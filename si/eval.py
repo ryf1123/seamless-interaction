@@ -168,7 +168,7 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
     倾听时自己的音轨是静音的，所以 partner=none 组在信息上不可能对齐——
     这一组的分数就是这个指标的下限。
     """
-    from .dyadic_data import backchannel_alignment
+    from .dyadic_data import backchannel_scores
     dev = get_device(device)
     cfg, ds, enc, model = load_run(run, ckpt)
     enc.to(dev).eval(); model.to(dev).eval()
@@ -181,11 +181,13 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
         clip = np.load(Path(cfg["data"]) / rec["file"])
         listen = ~clip[f"speak_{rec['side']}"]
         ev = rec["back_events"][rec["side"]]
-        a, n_pred, n_gt = backchannel_alignment(gen, ev, listen)
-        a_gt = backchannel_alignment(gt, ev, listen)[0]
-        rows.append({"id": rec["id"], "align": a, "align_gt": a_gt,
-                     "n_pred_nod": n_pred, "n_gt_nod": n_gt,
-                     "mpjpe_cm": mpjpe_cm(gen, gt)})
+        sc = backchannel_scores(gen, ev, listen)
+        sc_gt = backchannel_scores(gt, ev, listen)
+        rows.append({"id": rec["id"], "backchannel_f1": sc["f1"],
+                     "precision": sc["precision"], "recall": sc["recall"],
+                     "align": sc["align"], "f1_gt": sc_gt["f1"], "align_gt": sc_gt["align"],
+                     "n_pred_nod": sc["n_pred"], "n_gt_nod": sc["n_gt"],
+                     "n_events": sc["n_gt"], "mpjpe_cm": mpjpe_cm(gen, gt)})
         with torch.no_grad():
             for arr, bucket in ((ds.norm(gen), fp), (d["motion"].numpy(), fg)):
                 W, S = ds.window, max(1, ds.window // 2)
@@ -195,12 +197,14 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
                         bucket.append(ae.encode(torch.tensor(seg)[None].float()
                                                 .to(dev))[0].cpu().numpy())
     ok = [r for r in rows if not np.isnan(r["align"])]
+    m = lambda k: float(np.mean([r[k] for r in ok]))          # noqa: E731
     out = {"run": str(run), "n_clips": len(rows), "dataset": "dyadic",
            "partner": cfg["partner"], "objective": cfg["objective"],
            "fgd": frechet(np.stack(fp), np.stack(fg)),
            "mpjpe_cm": float(np.mean([r["mpjpe_cm"] for r in rows])),
-           "backchannel_align": float(np.mean([r["align"] for r in ok])),
-           "backchannel_align_gt": float(np.mean([r["align_gt"] for r in ok])),
+           "backchannel_f1": m("backchannel_f1"), "backchannel_f1_gt": m("f1_gt"),
+           "precision": m("precision"), "recall": m("recall"),
+           "backchannel_align": m("align"), "backchannel_align_gt": m("align_gt"),
            "n_gt_nod": int(sum(r["n_gt_nod"] for r in rows)),
            "n_pred_nod": int(sum(r["n_pred_nod"] for r in rows)),
            "per_clip": rows}
@@ -281,8 +285,10 @@ def main():
         print(f"\n{'='*62}\n{r['run']}  (partner={r['partner']})")
         print(f"  FGD              {r['fgd']:8.3f}   ↓")
         print(f"  MPJPE            {r['mpjpe_cm']:8.2f} cm ↓")
-        print(f"  反馈动作对齐 ★    {r['backchannel_align']:8.3f}   ↑   "
-              f"(真值 {r['backchannel_align_gt']:.3f})")
+        print(f"  反馈 F1 ★         {r['backchannel_f1']:8.3f}   ↑   "
+              f"(真值上限 {r['backchannel_f1_gt']:.3f})")
+        print(f"    精确率           {r['precision']:8.3f}    召回率 {r['recall']:.3f}")
+        print(f"  （旧的软对齐分     {r['backchannel_align']:8.3f}，只奖励召回，仅供参考）")
         print(f"  生成的点头 {r['n_pred_nod']} 个 / 真值 {r['n_gt_nod']} 个")
         return
     print(f"\n{'='*62}\n{r['run']}  ({r['audio_mode']} / {r['text_mode']} / {r['objective']})")

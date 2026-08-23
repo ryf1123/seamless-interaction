@@ -142,35 +142,82 @@ class DyadicData(Dataset):
 
 
 # ------------------------------------------------------------------ 评测指标
-def backchannel_alignment(pred_body: np.ndarray, events: list[dict],
-                          listen: np.ndarray, sigma: float = 4.0,
-                          fps: float = FPS) -> tuple[float, int, int]:
-    """反馈动作的时间对齐：生成的点头峰值离最近的真值反馈事件有多近。
-
-    点头 = 颈部俯仰的局部极大。只在**倾听区间**里找。
-    返回 (对齐分 ∈[0,1], 检出的点头数, 真值事件数)。分越高越对齐。
-    """
+def _neck_pitch(body: np.ndarray) -> np.ndarray:
+    """从 258 维特征里取颈部俯仰角（低头为正）。"""
     from .rotation import rot6d_to_matrix
     from .skeleton import BODY_JOINTS, JOINT_NAMES
     k = BODY_JOINTS.index(JOINT_NAMES.index("neck"))
-    R = rot6d_to_matrix(np.asarray(pred_body, dtype=np.float64)[:, k * 6:k * 6 + 6])
-    # 绕 x 轴的分量。neck 的旋转按 Rz@Ry@Rx 合成，X 分量就是 atan2(R21, R22)；
+    R = rot6d_to_matrix(np.asarray(body, dtype=np.float64)[:, k * 6:k * 6 + 6])
+    # neck 的旋转按 Rz@Ry@Rx 合成，X 分量就是 atan2(R21, R22)。
     # 符号取反会把点头的峰变成谷，真值的对齐分会掉到 0——第一版就是这么错的。
-    # 系数 0.6 是控制层把 neck_pitch 分给 neck 关节的权重（另外 0.4 给 head）。
-    pitch = np.arctan2(R[:, 2, 1], R[:, 2, 2])
+    return np.arctan2(R[:, 2, 1], R[:, 2, 2])
+
+
+def detect_nods(body: np.ndarray, listen: np.ndarray, thresh: float = 0.025,
+                min_gap: int = 12) -> list[int]:
+    """检出倾听区间里的点头：颈部俯仰的局部极大，过幅度阈值，且彼此至少隔 min_gap 帧。
+
+    最小间隔是必须的：生成的动作比真值抖得多，不加约束会在每个小波动上都检出一个"点头"。
+    12 帧（0.4 s）与数据生成时的 min_gap 一致。
+    """
+    pitch = _neck_pitch(body)
     T = min(len(pitch), len(listen))
     pitch, listen = pitch[:T], listen[:T].astype(bool)
-    peaks = [i for i in range(1, T - 1)
-             if listen[i] and pitch[i] > pitch[i - 1] and pitch[i] >= pitch[i + 1]
-             and pitch[i] > 0.025]
-    gt = np.array([e.get("peak_frame", e["frame"]) for e in events
-                   if e.get("peak_frame", e["frame"]) < T])
-    if len(gt) == 0:
-        return float("nan"), len(peaks), 0
-    if len(peaks) == 0:
-        return 0.0, 0, len(gt)
-    d = np.abs(gt[:, None] - np.array(peaks)[None]).min(1)
-    return float(np.exp(-d ** 2 / (2 * sigma ** 2)).mean()), len(peaks), len(gt)
+    cand = [i for i in range(1, T - 1)
+            if listen[i] and pitch[i] > pitch[i - 1] and pitch[i] >= pitch[i + 1]
+            and pitch[i] > thresh]
+    kept: list[int] = []
+    for i in sorted(cand, key=lambda j: -pitch[j]):      # 幅度大的优先
+        if all(abs(i - j) >= min_gap for j in kept):
+            kept.append(i)
+    return sorted(kept)
+
+
+def backchannel_scores(pred_body: np.ndarray, events: list[dict], listen: np.ndarray,
+                       tol: int = 6, sigma: float = 4.0) -> dict:
+    """反馈动作的检测质量。**主指标是 F1，不是对齐分。**
+
+    第一版只报「每个真值事件到最近预测峰的 exp(−d²/2σ²) 均值」，
+    结果 Monadic 组（信息上不可能知道对方在说什么）拿到 0.848——
+    因为它生成了 1362 个点头去对 187 个真值事件，撒得够密，每个真值附近自然都有一个。
+    **这和 BeatAlign 的毛病一模一样：只奖励召回，不惩罚滥竽充数。**
+
+    所以现在按 tol 帧（默认 6 帧 = 0.2 s）做一对一匹配，同时报精确率和召回率：
+        recall    有多少真值事件被命中
+        precision 生成的点头里有多少是真的
+        f1        主指标
+    对齐分（align）保留，但只当参考。
+    """
+    peaks = detect_nods(pred_body, listen)
+    gt = sorted(e.get("peak_frame", e["frame"]) for e in events
+                if e.get("peak_frame", e["frame"]) < len(listen))
+    out = {"n_pred": len(peaks), "n_gt": len(gt)}
+    if not gt:
+        return {**out, "f1": float("nan"), "precision": float("nan"),
+                "recall": float("nan"), "align": float("nan")}
+    if not peaks:
+        return {**out, "f1": 0.0, "precision": 0.0, "recall": 0.0, "align": 0.0}
+    # 贪心一对一匹配：距离最近的先配，配过的不再用
+    pairs = sorted(((abs(g - p), gi, pi) for gi, g in enumerate(gt)
+                    for pi, p in enumerate(peaks) if abs(g - p) <= tol))
+    used_g, used_p, hit = set(), set(), 0
+    for _, gi, pi in pairs:
+        if gi not in used_g and pi not in used_p:
+            used_g.add(gi); used_p.add(pi); hit += 1
+    recall = hit / len(gt)
+    precision = hit / len(peaks)
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    d = np.abs(np.array(gt)[:, None] - np.array(peaks)[None]).min(1)
+    return {**out, "f1": f1, "precision": precision, "recall": recall,
+            "align": float(np.exp(-d ** 2 / (2 * sigma ** 2)).mean())}
+
+
+def backchannel_alignment(pred_body: np.ndarray, events: list[dict],
+                          listen: np.ndarray, sigma: float = 4.0,
+                          fps: float = FPS) -> tuple[float, int, int]:
+    """向后兼容的旧接口：返回 (对齐分, 检出的点头数, 真值事件数)。"""
+    r = backchannel_scores(pred_body, events, listen, sigma=sigma)
+    return r["align"], r["n_pred"], r["n_gt"]
 
 
 if __name__ == "__main__":
