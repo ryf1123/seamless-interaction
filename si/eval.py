@@ -79,8 +79,9 @@ def generate_clip(cfg, ds, enc, model, rec, dev, steps=25, cfg_w=1.5, seed=0,
         # 确定性回归：没有噪声也没有 ODE，直接一次前向。分段是为了不超位置编码长度。
         out = _regress_forward(model, cond, spk, cfg["window"])
     elif long or T > cfg["window"]:
+        g = torch.Generator(device=dev).manual_seed(seed)
         out = sample_long(model, cond, spk, clip_len=cfg["window"], overlap=8,
-                          steps=steps, cfg=cfg_w)
+                          steps=steps, cfg=cfg_w, generator=g)
     else:
         g = torch.Generator(device=dev).manual_seed(seed)
         out = sample(model, cond, spk, steps=steps, cfg=cfg_w, generator=g)

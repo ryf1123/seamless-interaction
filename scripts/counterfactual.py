@@ -39,11 +39,11 @@ def gen_with_ids(cfg, ds, enc, model, rec, ids, dev, steps=25, cfg_w=1.5, seed=0
     cond = enc(d["audio"][None].to(dev), torch.from_numpy(ids)[None].to(dev),
                use_text=cfg["text_mode"] != "none")
     spk = d["spk"][None].to(dev)
+    g = torch.Generator(device=dev).manual_seed(seed)
     if cond.shape[1] > cfg["window"]:      # 长于训练窗口时走 FOPPAS 分段
         out = sample_long(model, cond, spk, clip_len=cfg["window"], overlap=8,
-                          steps=steps, cfg=cfg_w)
+                          steps=steps, cfg=cfg_w, generator=g)
     else:
-        g = torch.Generator(device=dev).manual_seed(seed)
         out = sample(model, cond, spk, steps=steps, cfg=cfg_w, generator=g)
     return ds.denorm(out[0].cpu().numpy()), d
 
@@ -163,11 +163,12 @@ def main():
 
     from scripts.video_grid import grid
     clip = np.load(Path(cfg["data"]) / rec["file"])
-    grid([gt[:, :258], m0[:, :258], m1[:, :258]],
-         ["真值", f"文本「{w_from}」→ 判为 {c0}", f"文本「{w_to}」→ 判为 {c1}"],
-         a.out, audio=clip["audio"], words=list(rec["words"]),
-         word_start=rec["word_start"], word_end=rec["word_end"], events=rec["events"],
-         title=f"同一条语音，只把第 {wi} 个词从「{w_from}」换成「{w_to}」")
+    for out in (a.out, "docs/figs/09_counterfactual.gif"):   # gif 给 GitHub / 飞书内嵌
+        grid([gt[:, :258], m0[:, :258], m1[:, :258]],
+             ["真值", f"文本「{w_from}」→ 判为 {c0}", f"文本「{w_to}」→ 判为 {c1}"],
+             out, audio=clip["audio"], words=list(rec["words"]),
+             word_start=rec["word_start"], word_end=rec["word_end"], events=rec["events"],
+             title=f"同一条语音，只把第 {wi} 个词从「{w_from}」换成「{w_to}」")
 
 
 if __name__ == "__main__":

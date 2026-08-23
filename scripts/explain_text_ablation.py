@@ -86,10 +86,11 @@ def main():
 
     from scripts.video_grid import grid
     clip = np.load(Path(cfg["data"]) / rec["file"])
-    grid(mots, labels, "videos/text_ablation.mp4", audio=clip["audio"],
-         words=list(rec["words"]), word_start=rec["word_start"],
-         word_end=rec["word_end"], events=rec["events"],
-         title=f"同一条语音，只改文本条件：{rec['text']}")
+    for out in ("videos/text_ablation.mp4", "docs/figs/09_text_ablation.gif"):
+        grid(mots, labels, out, audio=clip["audio"],
+             words=list(rec["words"]), word_start=rec["word_start"],
+             word_end=rec["word_end"], events=rec["events"],
+             title=f"同一条语音，只改文本条件：{rec['text']}")
 
 
 if __name__ == "__main__":

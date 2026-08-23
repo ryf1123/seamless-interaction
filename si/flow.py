@@ -64,7 +64,7 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
 @torch.no_grad()
 def sample_long(model, cond: torch.Tensor, spk: torch.Tensor, clip_len: int,
                 overlap: int = 8, steps: int = 25, cfg: float = 1.5,
-                blend: int = 4) -> torch.Tensor:
+                blend: int = 4, generator: torch.Generator | None = None) -> torch.Tensor:
     """FOPPAS：分段生成任意长序列，段间用 outpainting 接上。
 
     cond (1,T,Dc)。第一段 overlap=0 自由生成；之后每段把**开头 overlap 帧**钉成
@@ -92,7 +92,7 @@ def sample_long(model, cond: torch.Tensor, spk: torch.Tensor, clip_len: int,
         else:
             known = mask = None
         seg = sample(model, cond[:, pos:end], spk, steps=steps, cfg=cfg,
-                     known=known, known_mask=mask)
+                     known=known, known_mask=mask, generator=generator)
         if ov > 0 and blend > 0:
             b = min(blend, ov)
             w = torch.linspace(0.0, 1.0, b + 2, device=cond.device)[1:-1][None, :, None]
