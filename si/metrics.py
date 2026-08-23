@@ -89,16 +89,41 @@ _PROTO: np.ndarray | None = None
 
 
 def classify_pose(body: np.ndarray, frame: int) -> int:
-    """把某一帧的姿态判成 13 类里的哪一类（最近原型）。"""
+    """把某一帧的姿态判成 13 类里的哪一类（最近原型）。
+
+    距离是各关节 L2 距离的**平均**。这个聚合方式有一个已知的局限，读结果时要记住：
+    类别之间的差异如果只落在少数几个关节上（数手指的 count1/2/3 只差 1–3 个手指），
+    平均之后差异会被 44 个关节稀释掉——三个数数类的类间距只有 0.33 cm，
+    而全部类别的类间距中位数是 5.5 cm。
+
+    试过按「关节在 13 个原型之间的离散度」做尺度归一化，没有用：
+    归一化后 count2↔count3 的类间距 0.01、中位数 0.21，比值还是 1/20，
+    因为问题出在**均值这个聚合方式**上，不是出在量纲上。
+    所以这里保持最朴素的定义，并在文档里把可分性差异直接列出来
+    （见 `prototype_separation`）——指标的局限写清楚，比换一个看起来更聪明的指标有用。
+    """
     global _PROTO
     if _PROTO is None:
         _PROTO = class_prototypes()
-    P = joints(body[max(0, frame):max(0, frame) + 1])[0, _UPPER]
-    d = np.linalg.norm(_PROTO - P[None], axis=-1).mean(-1)
-    return int(d.argmin())
+    Q = joints(body[max(0, frame):max(0, frame) + 1])[0, _UPPER]
+    return int(np.linalg.norm(_PROTO - Q[None], axis=-1).mean(-1).argmin())
 
 
-def semantic_accuracy(pred: np.ndarray, events: list[dict]) -> tuple[float, list[tuple[int, int]]]:
+def prototype_separation() -> tuple[np.ndarray, np.ndarray, list[int]]:
+    """13 个类别原型之间的距离矩阵（cm）、到最近邻的距离、最近邻是谁。
+
+    这张表解释了 SemAcc 的分数结构：类别离得越开越容易判对。
+    """
+    global _PROTO
+    if _PROTO is None:
+        _PROTO = class_prototypes()
+    D = np.linalg.norm(_PROTO[:, None] - _PROTO[None], axis=-1).mean(-1) * 100
+    Dm = D.copy(); np.fill_diagonal(Dm, np.inf)
+    return D, Dm.min(1), [int(i) for i in Dm.argmin(1)]
+
+
+def semantic_accuracy(pred: np.ndarray,
+                      events: list[dict]) -> tuple[float, list[tuple[int, int]]]:
     """在每个语义事件的峰值帧判类，返回准确率和 (真值, 预测) 对。"""
     c2i = {c: i for i, c in enumerate(SEMANTIC_CLASSES)}
     pairs = []
