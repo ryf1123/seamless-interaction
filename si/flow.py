@@ -65,40 +65,43 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
 def sample_long(model, cond: torch.Tensor, spk: torch.Tensor, clip_len: int,
                 overlap: int = 8, steps: int = 25, cfg: float = 1.5,
                 blend: int = 4) -> torch.Tensor:
-    """FOPPAS：分段生成任意长序列，段间用 outpainting + 线性混合接上。
+    """FOPPAS：分段生成任意长序列，段间用 outpainting 接上。
 
-    cond (1,T,Dc)。第一段 overlap=0 自由生成，之后每段把前 `overlap` 帧钉成上一段的结尾。
+    cond (1,T,Dc)。第一段 overlap=0 自由生成；之后每段把**开头 overlap 帧**钉成
+    上一段的结尾（Repaint 式 outpainting），于是接缝天然连续。
+
+    钉法是近似的（每一步按当前 t 重新加噪再钉回去），所以重叠区里新生成的值
+    未必和上一段逐位相同。`blend` 就是为这点准备的：在重叠区上做一次线性交叉淡入，
+    权重从 0 走到 1，把上一段平滑地交给这一段。**淡入只能发生在重叠区内**——
+    写到重叠区之外就是在和还没生成的内容（全零）做混合，会造出一个大坑。
     """
     B, T, _ = cond.shape
-    assert B == 1
+    assert B == 1, "长序列采样一次只处理一条"
     out = torch.zeros(1, T, model.motion_dim, device=cond.device)
-    pos, first = 0, True
+    filled = 0                       # out[:, :filled] 已经写好
+    pos = 0
     while pos < T:
         end = min(pos + clip_len, T)
-        c = cond[:, pos:end]
         n = end - pos
-        known = torch.zeros(1, n, model.motion_dim, device=cond.device)
-        mask = torch.zeros(1, n, device=cond.device)
-        if not first:
-            k = min(overlap, n)
-            known[:, :k] = out[:, pos:pos + k]
-            mask[:, :k] = 1.0
-        seg = sample(model, c, spk, steps=steps, cfg=cfg,
-                     known=None if first else known,
-                     known_mask=None if first else mask)
-        if first:
-            out[:, pos:end] = seg
+        ov = min(overlap, filled - pos) if filled > pos else 0
+        if ov > 0:
+            known = torch.zeros(1, n, model.motion_dim, device=cond.device)
+            mask = torch.zeros(1, n, device=cond.device)
+            known[:, :ov] = out[:, pos:pos + ov]
+            mask[:, :ov] = 1.0
         else:
-            k = min(overlap, n)
-            w = torch.linspace(0, 1, max(blend, 1), device=cond.device)[None, :, None]
-            b = min(blend, n - k)
-            if b > 0:
-                out[:, pos + k:pos + k + b] = (
-                    (1 - w[:, :b]) * out[:, pos + k:pos + k + b] + w[:, :b] * seg[:, k:k + b])
-            out[:, pos + k + b:end] = seg[:, k + b:]
-        pos = end if first else end
-        first = False
+            known = mask = None
+        seg = sample(model, cond[:, pos:end], spk, steps=steps, cfg=cfg,
+                     known=known, known_mask=mask)
+        if ov > 0 and blend > 0:
+            b = min(blend, ov)
+            w = torch.linspace(0.0, 1.0, b + 2, device=cond.device)[1:-1][None, :, None]
+            out[:, pos:pos + b] = (1 - w) * out[:, pos:pos + b] + w * seg[:, :b]
+            out[:, pos + b:end] = seg[:, b:]
+        else:
+            out[:, pos + ov:end] = seg[:, ov:]
+        filled = end
         if end >= T:
             break
-        pos = end - overlap                     # 下一段回退 overlap 帧
+        pos = end - overlap
     return out
