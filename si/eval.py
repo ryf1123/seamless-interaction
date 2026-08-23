@@ -115,13 +115,24 @@ def fit_fgd_ae(ds: MotionData, dim: int, dev, iters: int = 400, seed: int = 0) -
     **所有 run 必须共用同一个自编码器**，否则各自的 FGD 落在不同的隐空间里，
     数值之间没有可比性。所以这里按 (数据集, 目标, 窗口) 缓存到磁盘，只训一次。
     """
-    cache = Path(ds.data_root) / f"fgd_ae_{ds.target}_{ds.window}.pt"
-    cache.parent.mkdir(parents=True, exist_ok=True)
     ae = MotionAE(dim).to(dev)
+    z = ae.enc[-1].out_channels
+    # 缓存文件名里必须带上隐维度和输入维度。踩过的坑：把 z 从 32 改成 16 之后，
+    # 磁盘上还留着旧的 32 维缓存，**新进程一加载就 shape mismatch 直接崩**，
+    # 而崩的位置在消融套件的评测阶段——训练白跑了两轮才发现。
+    # （更隐蔽的一半：改文件时旧的 si.ablate 进程已经把老模块导进内存了，
+    #   所以它继续用 z=32 又把缓存写了回去。长跑进程 + 磁盘缓存 = 要带版本。）
+    cache = Path(ds.data_root) / f"fgd_ae_{ds.target}_{ds.window}_d{dim}_z{z}.pt"
+    cache.parent.mkdir(parents=True, exist_ok=True)
     if cache.exists():
-        ae.load_state_dict(torch.load(cache, map_location=dev))
-        ae.eval()
-        return ae
+        try:
+            ae.load_state_dict(torch.load(cache, map_location=dev))
+            ae.eval()
+            return ae
+        except RuntimeError as ex:          # 结构对不上就重训，不要让评测挂掉
+            print(f"  FGD 自编码器缓存与当前结构不符，重训：{ex.__class__.__name__}")
+            cache.unlink(missing_ok=True)
+            ae = MotionAE(dim).to(dev)
     torch.manual_seed(seed)
     if type(ds).__name__ == "DyadicData":
         from .dyadic_data import DyadicData
