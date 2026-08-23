@@ -60,7 +60,7 @@ uv pip install numpy scipy torch torchaudio matplotlib imageio imageio-ffmpeg py
 # 造数据：400 句 ≈ 33 分钟语音 / 5.9 万帧动作，约 2.5 分钟（TTS 缓存并行预热）
 python -m si.dataset 400
 
-# 训练主基线（flow matching，Mel + 逐帧词 id），MPS 上 8000 步约 1 小时
+# 训练主基线（flow matching，Mel + 逐帧词 id），MPS 上 8000 步 52 分钟
 python -m si.train --config configs/flow_body.yaml --name flow_body
 
 # 闭环评测：FGD / MPJPE / BeatAlign / Diversity / 语义命中率
@@ -83,6 +83,19 @@ python -m si.render            # 渲染一段带音轨的演示视频
 python -m si.dyadic            # 打印一段双人对话的结构
 python scripts/walkthrough.py  # 把整条链路的形状和数值打印一遍
 python scripts/selfcheck.py    # 跑一遍所有不变量（改了表示层/专家/指标之后先跑这个）
+```
+
+## 最直观的一个证据：同一条语音，只换一个词
+
+音频一个采样点都不动，只把喂给模型的那十几帧词 id 从 `high` 换成 `low`，
+生成的手势就从「举手向上」翻成「压手向下」。批量跑 30 次换词，
+**83.3% 的情况下手势会换成新词对应的类别**。
+
+![counterfactual](docs/figs/09_counterfactual.gif)
+
+```bash
+python scripts/counterfactual.py --run runs/flow_body        # 单条 + 视频
+python scripts/counterfactual.py --run runs/flow_body --all  # 批量统计
 ```
 
 ## 双人（dyadic）
@@ -124,6 +137,8 @@ si/corpus.py          带类型槽位的模板语料 + 13 类语义手势词表
 si/tts.py             macOS `say` 逐词合成 + 拼接（词级对齐精确到帧）
 si/gesture_expert.py  规则专家：idle + beat + semantic 三路叠加
 si/dataset.py         建库落盘；si/data_torch.py 窗口切分、归一化、条件模式开关
+si/dyadic.py          双人对话数据：说话方三路 + 倾听方由**对方语音**触发的反馈动作
+si/dyadic_data.py     双人的 torch 侧 + 反馈动作时间对齐指标
 si/features.py        log-Mel / 离散语音 token / 四种文本模式
 si/models/dit.py      条件 DiT（RMSNorm、QK-Norm、adaLN-Zero、条件相加）
 si/flow.py            flow matching 训练目标、ODE 采样、FOPPAS outpainting
@@ -131,6 +146,8 @@ si/train.py           训练入口（--config + --set 覆盖）
 si/eval.py            闭环采样评测；si/metrics.py 五个指标
 si/ablate.py          消融套件；si/report.py 表格与图
 scripts/explain_*.py  讲解图，输出 docs/figs/
+scripts/walkthrough.py 链路走读；scripts/selfcheck.py 全部不变量自检
+scripts/counterfactual.py 换一个词看手势变不变；scripts/video_grid.py 同屏对比
 notes/                每一环一页笔记
 ```
 
