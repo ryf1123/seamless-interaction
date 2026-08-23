@@ -7,8 +7,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+import warnings
+warnings.filterwarnings("ignore", message="Glyph .* missing from font")
+
 plt.rcParams.update({
     "font.sans-serif": ["PingFang SC", "Heiti SC", "Arial Unicode MS", "DejaVu Sans"],
+    # 等宽字体也要能显示中文，否则数值表里的中文全变成豆腐块
+    "font.monospace": ["Menlo", "PingFang SC", "Heiti SC", "Arial Unicode MS",
+                       "DejaVu Sans Mono"],
     "axes.unicode_minus": False,
     "figure.dpi": 110,
     "savefig.bbox": "tight",
