@@ -212,6 +212,58 @@ def backchannel_scores(pred_body: np.ndarray, events: list[dict], listen: np.nda
             "align": float(np.exp(-d ** 2 / (2 * sigma ** 2)).mean())}
 
 
+def backchannel_chance(listen: np.ndarray, gt: list[int], n_pred: int,
+                       min_gap: int = 12, tol: int = 6, reps: int = 20,
+                       seed: int = 0) -> float:
+    """**同密度随机撒点**的 F1 基线：在倾听区间里随机放同样多的点头。
+
+    没有这个基线，F1 是读不懂的。实测三组模型都是 0.41–0.43，
+    而这个基线也是 0.40–0.41——也就是说它们撒点的密度已经足够让 F1 看起来不低，
+    但时机上没有任何信息。指标要有上限（真值 0.93）也要有下限，缺一不可。
+    """
+    idx = np.flatnonzero(np.asarray(listen, dtype=bool))
+    if len(idx) == 0 or n_pred == 0 or not gt:
+        return float("nan")
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(reps):
+        kept: list[int] = []
+        for i in rng.permutation(idx):
+            if len(kept) >= n_pred:
+                break
+            if all(abs(int(i) - j) >= min_gap for j in kept):
+                kept.append(int(i))
+        kept.sort()
+        pairs = sorted((abs(g - q), gi, qi) for gi, g in enumerate(gt)
+                       for qi, q in enumerate(kept) if abs(g - q) <= tol)
+        ug, up, hit = set(), set(), 0
+        for _, gi, qi in pairs:
+            if gi not in ug and qi not in up:
+                ug.add(gi); up.add(qi); hit += 1
+        r, pr = hit / len(gt), hit / max(len(kept), 1)
+        out.append(2 * pr * r / (pr + r) if pr + r else 0.0)
+    return float(np.mean(out))
+
+
+def partner_coupling(body: np.ndarray, partner_env: np.ndarray,
+                     listen: np.ndarray) -> float:
+    """倾听区间里，颈部俯仰角和**对方**语音包络的相关系数。
+
+    这是一个**不依赖点头检测器**的诊断。F1 被自身抖动淹没时，
+    它还能看出「对方的信息到底有没有流进来」。
+    真值上这个数只有 0.076——反馈动作相对于 idle 本来就很小，这就是它的上限。
+    """
+    T = min(len(body), len(partner_env), len(listen))
+    m = np.asarray(listen[:T], dtype=bool)
+    if m.sum() < 30:
+        return float("nan")
+    p = _neck_pitch(body[:T])[m]
+    e = np.asarray(partner_env[:T])[m]
+    if p.std() < 1e-6 or e.std() < 1e-6:
+        return float("nan")
+    return float(np.corrcoef(p, e)[0, 1])
+
+
 def backchannel_alignment(pred_body: np.ndarray, events: list[dict],
                           listen: np.ndarray, sigma: float = 4.0,
                           fps: float = FPS) -> tuple[float, int, int]:

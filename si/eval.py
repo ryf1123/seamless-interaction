@@ -168,7 +168,8 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
     倾听时自己的音轨是静音的，所以 partner=none 组在信息上不可能对齐——
     这一组的分数就是这个指标的下限。
     """
-    from .dyadic_data import backchannel_scores
+    from .dyadic_data import (backchannel_chance, backchannel_scores,
+                              partner_coupling)
     dev = get_device(device)
     cfg, ds, enc, model = load_run(run, ckpt)
     enc.to(dev).eval(); model.to(dev).eval()
@@ -183,7 +184,14 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
         ev = rec["back_events"][rec["side"]]
         sc = backchannel_scores(gen, ev, listen)
         sc_gt = backchannel_scores(gt, ev, listen)
+        gt_frames = sorted(e.get("peak_frame", e["frame"]) for e in ev
+                           if e.get("peak_frame", e["frame"]) < len(listen))
+        chance = backchannel_chance(listen, gt_frames, sc["n_pred"], seed=i)
+        other = "b" if rec["side"] == "a" else "a"
+        coup = partner_coupling(gen, clip[f"env_{other}"], listen)
+        coup_gt = partner_coupling(gt, clip[f"env_{other}"], listen)
         rows.append({"id": rec["id"], "backchannel_f1": sc["f1"],
+                     "chance_f1": chance, "coupling": coup, "coupling_gt": coup_gt,
                      "precision": sc["precision"], "recall": sc["recall"],
                      "align": sc["align"], "f1_gt": sc_gt["f1"], "align_gt": sc_gt["align"],
                      "n_pred_nod": sc["n_pred"], "n_gt_nod": sc["n_gt"],
@@ -203,6 +211,9 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
            "fgd": frechet(np.stack(fp), np.stack(fg)),
            "mpjpe_cm": float(np.mean([r["mpjpe_cm"] for r in rows])),
            "backchannel_f1": m("backchannel_f1"), "backchannel_f1_gt": m("f1_gt"),
+           "chance_f1": float(np.nanmean([r["chance_f1"] for r in ok])),
+           "coupling": float(np.nanmean([r["coupling"] for r in ok])),
+           "coupling_gt": float(np.nanmean([r["coupling_gt"] for r in ok])),
            "precision": m("precision"), "recall": m("recall"),
            "backchannel_align": m("align"), "backchannel_align_gt": m("align_gt"),
            "n_gt_nod": int(sum(r["n_gt_nod"] for r in rows)),
@@ -286,8 +297,12 @@ def main():
         print(f"  FGD              {r['fgd']:8.3f}   ↓")
         print(f"  MPJPE            {r['mpjpe_cm']:8.2f} cm ↓")
         print(f"  反馈 F1 ★         {r['backchannel_f1']:8.3f}   ↑   "
-              f"(真值上限 {r['backchannel_f1_gt']:.3f})")
+              f"(真值上限 {r['backchannel_f1_gt']:.3f}，"
+              f"同密度随机基线 {r.get('chance_f1', float('nan')):.3f})")
         print(f"    精确率           {r['precision']:8.3f}    召回率 {r['recall']:.3f}")
+        print(f"  对方耦合度        {r.get('coupling', float('nan')):8.3f}   ↑   "
+              f"(真值 {r.get('coupling_gt', float('nan')):.3f}) "
+              f"—— 不依赖点头检测器的诊断")
         print(f"  （旧的软对齐分     {r['backchannel_align']:8.3f}，只奖励召回，仅供参考）")
         print(f"  生成的点头 {r['n_pred_nod']} 个 / 真值 {r['n_gt_nod']} 个")
         return
