@@ -37,6 +37,28 @@ def metrics_for(rows: list[dict]):
     return METRICS, base
 
 
+def bootstrap_ci(run_name: str, key: str = "sem_acc", n_boot: int = 2000,
+                 seed: int = 0) -> tuple[float, float] | None:
+    """按**句子**自助重采样给出 95% 区间。
+
+    为什么必须给区间：测试集只有 40 句 / 137 个语义事件，
+    而且同一句里的多个事件不独立。只报点估计的话，
+    「16.8% 比 13.1% 好」这种 3 个百分点的差会被当成结论——实际上落在噪声里。
+    """
+    p = Path("runs") / run_name / "eval.json"
+    if not p.exists():
+        return None
+    per = [(c[key], c.get("n_events", 1)) for c in json.loads(p.read_text())["per_clip"]
+           if c.get(key) is not None and not np.isnan(c[key]) and c.get("n_events", 1)]
+    if len(per) < 3:
+        return None
+    rng = np.random.default_rng(seed)
+    a = np.array([x[0] for x in per]); w = np.array([x[1] for x in per], dtype=float)
+    idx = rng.integers(0, len(per), (n_boot, len(per)))
+    bs = (a[idx] * w[idx]).sum(1) / w[idx].sum(1)
+    return tuple(np.percentile(bs, [2.5, 97.5]))
+
+
 def load_curves(run: Path):
     tr, va = [], []
     for line in (run / "log.jsonl").read_text().splitlines():
@@ -51,14 +73,26 @@ def ablation_table(path: str | Path) -> str:
     head = "| 组 | 在问什么 | " + " | ".join(f"{n} {d}" for _, n, d, _, _ in metrics) + " |"
     sep = "|" + "-|" * (2 + len(metrics))
     lines = [head, sep]
+    star = "sem_acc" if metrics is METRICS else "backchannel_align"
     for r in rows:
         cells = []
         for k, _, _, sc, unit in metrics:
             v = r.get(k)
-            cells.append("—" if v is None else f"{v*sc:.1f}{unit}" if k == "sem_acc"
-                         else f"{v*sc:.3f}{unit}" if k == "backchannel_align"
-                         else f"{v*sc:.2f}{unit}")
+            if v is None:
+                cells.append("—"); continue
+            if k == star:
+                ci = bootstrap_ci(r["name"], key=k)
+                txt = f"{v*sc:.1f}{unit}" if k == "sem_acc" else f"{v*sc:.3f}"
+                if ci:
+                    txt += (f" [{ci[0]*sc:.1f}, {ci[1]*sc:.1f}]" if k == "sem_acc"
+                            else f" [{ci[0]:.3f}, {ci[1]:.3f}]")
+                cells.append(txt)
+            else:
+                cells.append(f"{v*sc:.2f}{unit}")
         lines.append(f"| `{r['name']}` | {r['desc']} | " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append("方括号是按**句子**自助重采样的 95% 区间（2000 次）。"
+                 "测试集只有 40 句，区间重叠的两组不要当成有差别。")
     return "\n".join(lines)
 
 
@@ -71,7 +105,15 @@ def ablation_figure(path: str | Path, out: str | Path) -> Path:
     for ax, (k, label, arrow, sc, unit) in zip(axes, metrics):
         vals = [(r.get(k) if r.get(k) is not None else np.nan) * sc for r in rows]
         star = k in ("sem_acc", "backchannel_align")
-        bars = ax.bar(range(len(vals)), vals,
+        _ = star
+        err = None
+        if star:
+            cis = [bootstrap_ci(r["name"], key=k) for r in rows]
+            if all(c is not None for c in cis):
+                err = np.array([[v - c[0] * sc for v, c in zip(vals, cis)],
+                                [c[1] * sc - v for v, c in zip(vals, cis)]])
+                err = np.clip(err, 0, None)
+        bars = ax.bar(range(len(vals)), vals, yerr=err, capsize=4,
                       color=["#1b5299" if star else "#8d99ae"] * len(vals))
         if star and base is not None:
             ax.axhline(base, color="#d1495b", ls="--", lw=1.2)

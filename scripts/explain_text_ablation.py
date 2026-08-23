@@ -73,7 +73,7 @@ def main():
                 s.set_alpha(0.18)
             pred = SEMANTIC_CLASSES[classify_pose(m, f)]
             ok = pred == e["cls"]
-            ax.set_xlabel(f"{'✓' if ok else '✗'} {pred}", fontsize=8.5,
+            ax.set_xlabel(f"{'对' if ok else '错'}  {pred}", fontsize=8.5,
                           color=GREEN if ok else RED, labelpad=1)
             if r == 0:
                 ax.set_title(f"「{e['word']}」\n应为 {e['cls']}", fontsize=9, color=BLUE)
@@ -81,7 +81,7 @@ def main():
                 ax.text(-0.16, 0.5, lb, transform=ax.transAxes, ha="right", va="center",
                         fontsize=10, color=BLUE if r == 0 else "#333")
     fig.suptitle(f"同一条语音，只改文本条件 ——「{rec['text']}」\n"
-                 f"每格下方是该帧被判成的类别（✓ 对 / ✗ 错）", fontsize=12, y=0.995)
+                 f"每格下方是该帧被判成的类别（绿=对，红=错）", fontsize=12, y=0.995)
     save(fig, "09_text_ablation.png")
 
     from scripts.video_grid import grid
