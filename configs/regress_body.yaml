@@ -1,0 +1,12 @@
+# 对照：同一个骨干、同一份条件，只把目标函数换成确定性 L1 回归
+target: body
+audio_mode: mel
+text_mode: seq
+objective: regress
+window: 120
+d_model: 256
+depth: 6
+steps: 8000
+batch: 32
+lr: 0.0003
+cond_dropout: 0.0

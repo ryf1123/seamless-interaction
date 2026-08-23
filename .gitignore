@@ -1,0 +1,10 @@
+.venv/
+data/
+runs/
+third_party/
+__pycache__/
+*.pyc
+videos/*.mp4
+videos/*.wav
+docs/figs/*.mp4
+.DS_Store

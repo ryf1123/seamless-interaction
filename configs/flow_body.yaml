@@ -1,0 +1,11 @@
+# 主基线：flow-matching 生成身体动作，条件 = Mel + 逐帧词 id
+target: body
+audio_mode: mel
+text_mode: seq
+objective: flow
+window: 120
+d_model: 256
+depth: 6
+steps: 8000
+batch: 32
+lr: 0.0003
