@@ -1,0 +1,13 @@
+# 2000 句 + 多峰版：45% 的语义词不做手势、22% 换手、幅度 ±35% 抖动。
+# 用来重跑第一环（生成式 vs 确定性）——40 句上排序翻转但区间重叠，判不了。
+data: data/toy2k_multi
+target: body
+audio_mode: token
+text_mode: seq
+objective: flow
+window: 120
+d_model: 256
+depth: 6
+steps: 8000
+batch: 32
+lr: 0.0003

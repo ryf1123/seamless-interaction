@@ -99,8 +99,16 @@ def load_clip(root: str | Path, rec: dict) -> dict:
 
 
 if __name__ == "__main__":
-    import sys
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    mm = "--multimodal" in sys.argv
-    build(int(args[0]) if args else 400,
-          out="data/toy_multi" if mm else "data/toy", multimodal=mm)
+    import argparse
+    # 这里以前是手写的 argv 解析，而且**把 --out 整个忽略了**——
+    # 传 `--out data/toy2k_multi --multimodal` 会写进 data/toy_multi，
+    # 把原来 400 句的多峰数据覆盖掉，而且一声不吭。改用 argparse。
+    ap = argparse.ArgumentParser(description="造数据集")
+    ap.add_argument("n", nargs="?", type=int, default=400, help="句子数")
+    ap.add_argument("--out", default=None, help="输出目录（默认按是否 --multimodal 取名）")
+    ap.add_argument("--multimodal", action="store_true",
+                    help="多峰版：45%% 的语义词不做手势、22%% 换手、幅度 ±35%% 抖动")
+    ap.add_argument("--seed", type=int, default=0)
+    a = ap.parse_args()
+    out = a.out or ("data/toy_multi" if a.multimodal else "data/toy")
+    build(a.n, seed=a.seed, out=out, multimodal=a.multimodal)

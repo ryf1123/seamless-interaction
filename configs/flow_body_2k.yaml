@@ -1,0 +1,13 @@
+# 2000 句版的主配置：测试集 200 句 / 664 个语义事件，
+# 自助 95% 区间从 ±7 收窄到 ±3.5 个百分点——40 句上判不了的比较，在这里能判。
+data: data/toy2k
+target: body
+audio_mode: token
+text_mode: seq
+objective: flow
+window: 120
+d_model: 256
+depth: 6
+steps: 8000
+batch: 32
+lr: 0.0003

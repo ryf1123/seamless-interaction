@@ -53,6 +53,23 @@ SUITES: dict[str, list[dict]] = {
         {"name": "s_huber", "desc": "λ_v=5 + Huber 重建损失（DiffSHEG 式 7）",
          "lambda_vel": 5.0, "lambda_huber": 1.0},
     ],
+    # 第一环在 2000 句多峰数据上重跑。40 句时排序翻转了但置信区间大幅重叠
+    # （flow 34.1% [20.9, 48.4] vs 回归 23.2% [13.7, 33.3]），判不了。
+    # 200 句测试集把区间收窄一半，这一组是为了把那个结论钉死。
+    "objective_2k": [
+        {"name": "q_flow", "desc": "flow matching（生成式）· 2000 句多峰", "objective": "flow"},
+        {"name": "q_regress", "desc": "L1 回归（确定性）· 2000 句多峰",
+         "objective": "regress", "cond_dropout": 0.0},
+    ],
+    # 第二环在 2000 句上重跑。靶心结论（seq 远超其余）本来就决定性，
+    # 真正判不了的是 **bow / shuffle / none 三组之间**——它们在 40 句上区间全重叠。
+    # 「知道有哪些词但不知道时机」到底买不买得到东西，只能在 200 句上问。
+    "text_2k": [
+        {"name": "u_seq", "desc": "逐帧对齐的词 id · 2000 句", "text_mode": "seq"},
+        {"name": "u_bow", "desc": "整句词袋 · 2000 句", "text_mode": "bow"},
+        {"name": "u_shuffle", "desc": "句内换位 · 2000 句", "text_mode": "shuffle"},
+        {"name": "u_none", "desc": "没有文本 · 2000 句", "text_mode": "none"},
+    ],
     # 第三环：音频表示
     "audio": [
         {"name": "a_mel", "desc": "80 维 log-Mel", "audio_mode": "mel"},
@@ -65,6 +82,8 @@ SUITES: dict[str, list[dict]] = {
 
 
 BASE_CONFIG = {"dyadic": "configs/dyadic.yaml",
+               "objective_2k": "configs/flow_body_2k_multi.yaml",
+               "text_2k": "configs/flow_body_2k.yaml",
                "objective_multi": "configs/flow_body_multi.yaml"}
 
 
