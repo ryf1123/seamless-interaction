@@ -32,7 +32,7 @@ def load_run(run: str | Path, ckpt: str = "best.pt", raw: bool = False):
     cfg = yaml.safe_load((run / "config.yaml").read_text())
     cfg.setdefault("dataset", "toy"); cfg.setdefault("partner", "audio")
     if cfg["dataset"] == "dyadic":
-        return _load_dyadic(run, cfg, ckpt)
+        return _load_dyadic(run, cfg, ckpt, raw=raw)
     vocab = json.loads((run / "vocab.json").read_text())
     stats = {k: v for k, v in np.load(run / "stats.npz").items()}
     tok = None
@@ -57,7 +57,7 @@ def load_run(run: str | Path, ckpt: str = "best.pt", raw: bool = False):
     return cfg, ds, enc, model
 
 
-def _load_dyadic(run: Path, cfg: dict, ckpt: str):
+def _load_dyadic(run: Path, cfg: dict, ckpt: str, raw: bool = False):
     from .dyadic_data import DyadicData
     stats = {k: v for k, v in np.load(run / "stats.npz").items()}
     ds = DyadicData(root=cfg["data"], split="test", window=cfg["window"],
@@ -65,7 +65,8 @@ def _load_dyadic(run: Path, cfg: dict, ckpt: str):
     ck = torch.load(run / ckpt, map_location="cpu", weights_only=False)
     enc = CondEncoder(ds.cond_dim, 2, cfg["d_cond"], cfg["d_word"], n_tokens=0)
     model = MotionDiT(ds[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
-                      cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8, n_speakers=2)
+                      cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8, n_speakers=2,
+                      smooth_out=cfg.get("smooth_out", 0))
     # 训练时开了 EMA 的话，`model` 存的就是 EMA 权重；raw=True 取未平均的原始权重
     mk = "model_raw" if (raw and "model_raw" in ck) else "model"
     ek = "enc_raw" if (raw and "enc_raw" in ck) else "enc"
@@ -174,7 +175,8 @@ def fit_fgd_ae(ds: MotionData, dim: int, dev, iters: int = 400, seed: int = 0) -
 
 def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
                     device: str = "mps", max_clips: int | None = None,
-                    ckpt: str = "best.pt") -> dict:
+                    ckpt: str = "best.pt", smooth: int = 0, raw: bool = False,
+                    out_name: str = "eval.json") -> dict:
     """第六环的评测：主指标是**反馈动作的时间对齐**。
 
     倾听时自己的音轨是静音的，所以 partner=none 组在信息上不可能对齐——
@@ -189,7 +191,8 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
     ae = fit_fgd_ae(ds, ds[0]["motion"].shape[-1], dev)
     rows, fp, fg = [], [], []
     for i, rec in enumerate(recs):
-        gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w, seed=i)
+        gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w, seed=i,
+                               smooth=smooth)
         gt = ds.denorm(d["motion"].numpy())
         clip = np.load(Path(cfg["data"]) / rec["file"])
         listen = ~clip[f"speak_{rec['side']}"]
@@ -220,6 +223,7 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
     m = lambda k: float(np.mean([r[k] for r in ok]))          # noqa: E731
     out = {"run": str(run), "n_clips": len(rows), "dataset": "dyadic",
            "partner": cfg["partner"], "objective": cfg["objective"],
+           "smooth": smooth, "raw_weights": raw,
            "fgd": frechet(np.stack(fp), np.stack(fg)),
            "mpjpe_cm": float(np.mean([r["mpjpe_cm"] for r in rows])),
            "backchannel_f1": m("backchannel_f1"), "backchannel_f1_gt": m("f1_gt"),
@@ -241,7 +245,8 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
              long: bool = False, ckpt: str = "best.pt", smooth: int = 0,
              raw: bool = False, out_name: str = "eval.json") -> dict:
     if yaml.safe_load(Path(run, "config.yaml").read_text()).get("dataset") == "dyadic":
-        return evaluate_dyadic(run, steps, cfg_w, device, max_clips, ckpt)
+        return evaluate_dyadic(run, steps, cfg_w, device, max_clips, ckpt,
+                               smooth=smooth, raw=raw, out_name=out_name)
     dev = get_device(device)
     cfg, ds, enc, model = load_run(run, ckpt, raw=raw)
     enc.to(dev).eval(); model.to(dev).eval()
