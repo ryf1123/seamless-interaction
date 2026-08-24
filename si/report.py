@@ -61,6 +61,60 @@ def bootstrap_ci(run_name: str, key: str = "sem_acc", n_boot: int = 2000,
     return tuple(np.percentile(bs, [2.5, 97.5]))
 
 
+def mcnemar(run_a: str, run_b: str, eval_a: str = "eval.json",
+            eval_b: str = "eval.json") -> dict | None:
+    """两个 run 在**同一批语义事件**上的配对比较（McNemar 精确检验）。
+
+    为什么要配对：所有 run 评的是同一个测试集、同一批事件。
+    各自算 95% 区间再看重不重叠，等于把「两组用的是同一批题目」这个信息扔掉了——
+    统计效率差一到两个数量级。实测：`bow` 和 `none` 的非配对区间大幅重叠、
+    按纪律不能说有差别，配对之后才看得出到底有没有差。
+
+    返回 b_only / c_only（只有一方答对的事件数）、精确 p 值、以及配对差值。
+    """
+    from scipy.stats import binomtest
+    A = json.loads((Path("runs") / run_a / eval_a).read_text()).get("per_event")
+    B = json.loads((Path("runs") / run_b / eval_b).read_text()).get("per_event")
+    if not A or not B:
+        return None
+    ka = {(e["clip"], e["event"]): e["ok"] for e in A}
+    kb = {(e["clip"], e["event"]): e["ok"] for e in B}
+    keys = sorted(set(ka) & set(kb))
+    if not keys:
+        return None
+    b = sum(1 for k in keys if ka[k] == 1 and kb[k] == 0)   # 只有 A 对
+    c = sum(1 for k in keys if ka[k] == 0 and kb[k] == 1)   # 只有 B 对
+    n = b + c
+    p = binomtest(b, n, 0.5).pvalue if n else 1.0
+    acc_a = sum(ka[k] for k in keys) / len(keys)
+    acc_b = sum(kb[k] for k in keys) / len(keys)
+    return {"n_paired": len(keys), "a_only": b, "b_only": c, "p": float(p),
+            "acc_a": acc_a, "acc_b": acc_b, "diff": acc_a - acc_b,
+            "discordant": n}
+
+
+def paired_table(runs: list[tuple[str, str]], base: int = 0) -> str:
+    """所有组对基准组的配对比较表。runs 是 [(run 名, 显示名)]。"""
+    base_run, base_lb = runs[base]
+    lines = [f"| 组 | SemAcc | 与「{base_lb}」的配对差 | 只有它对 / 只有基准对 | McNemar p |",
+             "|-|-|-|-|-|"]
+    for r, lb in runs:
+        if r == base_run:
+            m = mcnemar(r, base_run)
+            lines.append(f"| **{lb}**（基准） | {m['acc_a']*100:.1f}% | — | — | — |")
+            continue
+        m = mcnemar(r, base_run)
+        if m is None:
+            lines.append(f"| {lb} | — | — | — | — |"); continue
+        sig = "**" if m["p"] < 0.05 else ""
+        lines.append(f"| {lb} | {m['acc_a']*100:.1f}% | {sig}{m['diff']*100:+.1f} 个百分点{sig} "
+                     f"| {m['a_only']} / {m['b_only']} | {sig}{m['p']:.4f}{sig} |")
+    lines.append("")
+    lines.append("配对 McNemar 精确检验：只看**两组给出不同答案**的那些事件。"
+                 "加粗 = p < 0.05。这比各自算区间再看重叠灵敏得多。")
+    return "\n".join(lines)
+
+
 def load_curves(run: Path):
     tr, va = [], []
     for line in (run / "log.jsonl").read_text().splitlines():
@@ -183,8 +237,16 @@ def confusion_figure(eval_json: str | Path, out: str | Path, title: str = "") ->
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ablation"); ap.add_argument("--runs", nargs="*")
-    ap.add_argument("--confusion"); ap.add_argument("--out", required=True)
+    ap.add_argument("--confusion")
+    ap.add_argument("--paired", nargs="*", default=None,
+                    help="配对比较：run1 标签1 run2 标签2 ...，第一个是基准")
+    ap.add_argument("--out", required=False)
     a = ap.parse_args()
+    if a.paired:
+        it = a.paired
+        runs = [(it[i], it[i + 1]) for i in range(0, len(it) - 1, 2)]
+        print(paired_table(runs))
+        return
     if a.ablation:
         print(ablation_table(a.ablation))
         print("\n图 →", ablation_figure(a.ablation, a.out))

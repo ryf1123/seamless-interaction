@@ -259,6 +259,7 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
     ae = fit_fgd_ae(ds, dim, dev)
 
     rows, feats_p, feats_g, pairs = [], [], [], []
+    events_detail: list[dict] = []
     for i, rec in enumerate(recs):
         gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w, seed=i,
                                long=long, smooth=smooth)
@@ -268,6 +269,13 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
         ab = detect_beats(clip["env"])
         acc, pr = semantic_accuracy(body_p, rec["events"])
         pairs += pr
+        # 逐事件记录，用来做**配对**统计（McNemar）。所有 run 评的是同一批测试句、
+        # 同一批事件，配对比较的统计效率比各自算区间再看重不重叠高一到两个数量级。
+        ev_ok = [e for e in rec["events"] if not e.get("omitted")]
+        events_detail += [{"clip": rec["id"], "event": int(e["word_index"]),
+                           "cls": e["cls"], "pred": SEMANTIC_CLASSES[p],
+                           "ok": int(t == p)}
+                          for e, (t, p) in zip(ev_ok, pr)]
         samples = [generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w,
                                  seed=1000 + i * 10 + k, smooth=smooth)[0][:, :258]
                    for k in range(n_div)]
@@ -307,7 +315,7 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
            "audio_mode": cfg["audio_mode"], "text_mode": cfg["text_mode"],
            "objective": cfg["objective"], "smooth": smooth, "raw_weights": raw,
            "confusion": confusion(pairs).tolist(), "classes": SEMANTIC_CLASSES,
-           "per_clip": rows}
+           "per_clip": rows, "per_event": events_detail}
     # out_name 可以改名，避免带平滑/原始权重的结果覆盖掉主 eval.json
     Path(run, out_name).write_text(json.dumps(out, ensure_ascii=False, indent=1))
     return out
