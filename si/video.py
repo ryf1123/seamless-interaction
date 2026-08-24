@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .render import (BODY_CHAINS, FINGER_CHAINS, HEAD_J, LEG_CHAINS, NECK_J,
-                     joints_from_body)
+                     NOSE_LOCAL, joints_from_body)
 from .skeleton import JOINT_NAMES
 
 plt.rcParams["font.sans-serif"] = ["PingFang SC", "Heiti SC", "Arial Unicode MS", "DejaVu Sans"]
@@ -30,8 +30,13 @@ BLUE, RED, GRAY, GREEN = "#1b5299", "#d1495b", "#8d99ae", "#2a9d8f"
 WRIST_L, WRIST_R = JOINT_NAMES.index("left_wrist"), JOINT_NAMES.index("right_wrist")
 
 
-def draw(ax, P, ai, bi, color, lw=2.8, alpha=1.0, trail=None, trail_n=15):
-    """画一帧骨架。trail 是 (n,52,3) 的历史帧，用来画手腕拖尾。"""
+def draw(ax, P, ai, bi, color, lw=2.8, alpha=1.0, trail=None, trail_n=15, R=None):
+    """画一帧骨架。
+
+    trail 是 (n,52,3) 的历史帧，用来画手腕拖尾。
+    R 是 (52,3,3) 的全局旋转；给了就画一根「鼻子」标出朝向——
+    没有它的话摇头（绕竖直轴的偏航）在任何视角下都看不出来。
+    """
     for chain in LEG_CHAINS:
         ax.plot(P[chain, ai], P[chain, bi], "-", color="#d8dbe0", lw=lw * 0.85,
                 alpha=alpha * 0.7, zorder=1)
@@ -51,6 +56,10 @@ def draw(ax, P, ai, bi, color, lw=2.8, alpha=1.0, trail=None, trail_n=15):
     c = P[HEAD_J] + d * 0.75
     ax.add_patch(plt.Circle((c[ai], c[bi]), 0.105, fill=False, color=color,
                             lw=lw * 0.85, alpha=alpha, zorder=5))
+    if R is not None:
+        nose = c + R[HEAD_J] @ NOSE_LOCAL
+        ax.plot([c[ai], nose[ai]], [c[bi], nose[bi]], "-", color=color,
+                lw=lw * 0.8, alpha=alpha, zorder=5)
     ax.set_xlim(-1.05, 1.05); ax.set_ylim(-0.95, 1.15)
     ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
     for s in ax.spines.values():

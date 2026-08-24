@@ -32,9 +32,14 @@ plt.rcParams["font.sans-serif"] = _CN_FONTS
 plt.rcParams["axes.unicode_minus"] = False
 
 
-def joints_from_body(body: np.ndarray) -> np.ndarray:
-    """(T,258) → (T,52,3) 关节世界坐标。"""
-    return forward_kinematics(body_feature_to_pose6d(body))
+def joints_from_body(body: np.ndarray, return_rot: bool = False):
+    """(T,258) → (T,52,3) 关节世界坐标；return_rot 时附带 (T,52,3,3) 全局旋转。"""
+    return forward_kinematics(body_feature_to_pose6d(body), return_rot=return_rot)
+
+
+# 鼻子：从头关节沿头部局部 +z（正前方）伸出去的一小段。
+# 没有它的话，绕竖直轴的偏航（摇头）在任何视角下都看不出来——头是个球。
+NOSE_LOCAL = np.array([0.0, 0.02, 0.20])
 
 
 def _draw_skeleton(ax, P, ai, bi, color, lw=2.6, alpha=1.0, legs=True):

@@ -27,7 +27,7 @@ from .models.dit import CondEncoder, MotionDiT
 from .train import get_device
 
 
-def load_run(run: str | Path, ckpt: str = "best.pt"):
+def load_run(run: str | Path, ckpt: str = "best.pt", raw: bool = False):
     run = Path(run)
     cfg = yaml.safe_load((run / "config.yaml").read_text())
     cfg.setdefault("dataset", "toy"); cfg.setdefault("partner", "audio")
@@ -49,7 +49,10 @@ def load_run(run: str | Path, ckpt: str = "best.pt"):
     n_spk = max(r["speaker_id"] for r in ds.all_recs) + 1
     model = MotionDiT(ds[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
                       cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8, n_speakers=n_spk)
-    model.load_state_dict(ck["model"]); enc.load_state_dict(ck["enc"])
+    # 训练时开了 EMA 的话，`model` 存的就是 EMA 权重；raw=True 取未平均的原始权重
+    mk = "model_raw" if (raw and "model_raw" in ck) else "model"
+    ek = "enc_raw" if (raw and "enc_raw" in ck) else "enc"
+    model.load_state_dict(ck[mk]); enc.load_state_dict(ck[ek])
     return cfg, ds, enc, model
 
 
@@ -62,7 +65,10 @@ def _load_dyadic(run: Path, cfg: dict, ckpt: str):
     enc = CondEncoder(ds.cond_dim, 2, cfg["d_cond"], cfg["d_word"], n_tokens=0)
     model = MotionDiT(ds[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
                       cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8, n_speakers=2)
-    model.load_state_dict(ck["model"]); enc.load_state_dict(ck["enc"])
+    # 训练时开了 EMA 的话，`model` 存的就是 EMA 权重；raw=True 取未平均的原始权重
+    mk = "model_raw" if (raw and "model_raw" in ck) else "model"
+    ek = "enc_raw" if (raw and "enc_raw" in ck) else "enc"
+    model.load_state_dict(ck[mk]); enc.load_state_dict(ck[ek])
     return cfg, ds, enc, model
 
 

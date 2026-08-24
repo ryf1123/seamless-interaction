@@ -34,6 +34,8 @@ DEFAULTS = dict(
     lambda_vel=1.0,       # 速度损失（DiffSHEG 式 6）：抑制抖动
     lambda_huber=0.0,     # Huber 重建损失（DiffSHEG 式 7），作用在 x̂₀ 上
     huber_delta=0.1,
+    ema=0.0,              # 权重 EMA 的衰减率（0 = 关）。扩散/流模型的标准做法，
+                          # 推理用滑动平均权重，通常能明显压掉高频抖动。
 )
 
 
@@ -113,6 +115,32 @@ def loss_fn(cfg, model, enc, batch, dev, gen=None):
     return loss, parts
 
 
+class EMA:
+    """权重的指数滑动平均。
+
+    扩散和流模型里几乎是标配：训练权重每步都在抖，用它的滑动平均去推理，
+    输出会平滑很多。本项目一开始漏了这一步，而抖动恰恰是最大的质量瓶颈——
+    所以它是「先试哪个」列表里成本最低的一项：不改结构、不改损失、不加训练时间。
+    """
+
+    def __init__(self, modules, decay: float):
+        self.decay = decay
+        self.shadow = [{k: v.detach().clone().float() for k, v in m.state_dict().items()}
+                       for m in modules]
+
+    @torch.no_grad()
+    def update(self, modules):
+        for sh, m in zip(self.shadow, modules):
+            for k, v in m.state_dict().items():
+                if v.dtype.is_floating_point:
+                    sh[k].mul_(self.decay).add_(v.detach().float(), alpha=1 - self.decay)
+                else:
+                    sh[k] = v.detach().clone()
+
+    def state_dicts(self):
+        return [{k: v.clone() for k, v in sh.items()} for sh in self.shadow]
+
+
 def train(cfg: dict, name: str) -> Path:
     torch.manual_seed(cfg["seed"]); np.random.seed(cfg["seed"])
     dev = get_device(cfg["device"])
@@ -136,6 +164,7 @@ def train(cfg: dict, name: str) -> Path:
     opt = torch.optim.AdamW(params, lr=cfg["lr"], weight_decay=cfg["weight_decay"])
     dl = DataLoader(tr, batch_size=cfg["batch"], shuffle=True, drop_last=True)
     vl = DataLoader(va, batch_size=cfg["batch"], shuffle=False)
+    ema = EMA([model, enc], cfg["ema"]) if cfg.get("ema", 0.0) else None
     log = (run / "log.jsonl").open("w")
     it, t0, best = 0, time.time(), 1e9
     while it < cfg["steps"]:
@@ -151,6 +180,8 @@ def train(cfg: dict, name: str) -> Path:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(params, 1.0)
             opt.step()
+            if ema is not None:
+                ema.update([model, enc])
             if it % cfg["log_every"] == 0:
                 rec = {"it": it, "loss": loss.item(), **parts,
                        "lr": lr, "sec": time.time() - t0}
@@ -169,10 +200,18 @@ def train(cfg: dict, name: str) -> Path:
                 print(f"  it {it:6d}  val {v:.4f}")
                 if v < best:
                     best = v
-                    torch.save({"model": model.state_dict(), "enc": enc.state_dict(),
-                                "cfg": cfg}, run / "best.pt")
-    torch.save({"model": model.state_dict(), "enc": enc.state_dict(), "cfg": cfg},
-               run / "latest.pt")
+                    ck = {"model": model.state_dict(), "enc": enc.state_dict(), "cfg": cfg}
+                    if ema is not None:
+                        # 推理默认用 EMA 权重；原始权重也存着，方便对比
+                        e_m, e_e = ema.state_dicts()
+                        ck.update(model_raw=ck["model"], enc_raw=ck["enc"],
+                                  model=e_m, enc=e_e)
+                    torch.save(ck, run / "best.pt")
+    ck = {"model": model.state_dict(), "enc": enc.state_dict(), "cfg": cfg}
+    if ema is not None:
+        e_m, e_e = ema.state_dicts()
+        ck.update(model_raw=ck["model"], enc_raw=ck["enc"], model=e_m, enc=e_e)
+    torch.save(ck, run / "latest.pt")
     log.close()
     print(f"[{name}] 完成，{time.time()-t0:.0f}s，best val {best:.4f} → {run}")
     return run

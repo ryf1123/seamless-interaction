@@ -116,7 +116,8 @@ REST_OFFSETS = _build_rest_offsets()
 
 
 def forward_kinematics(pose6d: np.ndarray, root_orient6d: np.ndarray | None = None,
-                       root_trans: np.ndarray | None = None) -> np.ndarray:
+                       root_trans: np.ndarray | None = None,
+                       return_rot: bool = False):
     """正运动学：关节旋转 → 52 个关节的世界坐标。
 
     参数
@@ -124,7 +125,9 @@ def forward_kinematics(pose6d: np.ndarray, root_orient6d: np.ndarray | None = No
         root_orient6d (T, 6)     根朝向，默认单位旋转
         root_trans   (T, 3)      根平移，默认 0
     返回
-        (T, 52, 3)   世界坐标
+        (T, 52, 3)   世界坐标；return_rot=True 时额外返回 (T, 52, 3, 3) 的全局旋转。
+        全局旋转用来画「朝向」——只有位置的话，绕竖直轴的偏航（摇头）在任何视角下
+        都看不出来，因为头是个球。
     """
     pose6d = np.asarray(pose6d, dtype=np.float64)
     T = pose6d.shape[0]
@@ -143,7 +146,7 @@ def forward_kinematics(pose6d: np.ndarray, root_orient6d: np.ndarray | None = No
         p = PARENTS[j]
         Rg[:, j] = Rg[:, p] @ R[:, j]
         pos[:, j] = pos[:, p] + (Rg[:, p] @ REST_OFFSETS[j])
-    return pos
+    return (pos, Rg) if return_rot else pos
 
 
 def body_feature_to_pose6d(feat: np.ndarray) -> np.ndarray:
