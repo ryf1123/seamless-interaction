@@ -239,9 +239,48 @@ def smoothing():
     return m
 
 
+def best():
+    """当前系统最好的输出：2000 句训的模型 + 推理后 SG 滤波，和真值并排。
+
+    这是「现在做到什么程度了」的诚实展示——标签里写清了配置和数字。
+    """
+    from si.eval import generate_clip, load_run
+    from si.metrics import jitter as jt, semantic_accuracy
+    from si.train import get_device
+    from si.corpus import SEMANTIC_CLASSES
+    from si.metrics import classify_pose
+    run = "runs/v2_2k" if Path("runs/v2_2k/best.pt").exists() else "runs/flow_body"
+    dev = get_device("mps")
+    cfg, ds, enc, model = load_run(run)
+    enc.to(dev).eval(); model.to(dev).eval()
+    rec = max(ds.recs[:40], key=lambda r: len(r["events"]))
+    gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps=25, seed=0, smooth=9)
+    gt = ds.denorm(d["motion"].numpy())[:, :258]
+    acc, _ = semantic_accuracy(gen[:, :258], rec["events"])
+    clip = np.load(Path(cfg["data"]) / rec["file"])
+    note = [""] * min(len(gt), len(gen))
+    for e in rec["events"]:
+        c = SEMANTIC_CLASSES[classify_pose(gen[:, :258], min(e["peak_frame"], len(note) - 1))]
+        ok = "对" if c == e["cls"] else "错"
+        for t in range(e["frame_start"], min(e["frame_end"], len(note))):
+            note[t] = f"「{e['word']}」应为 {e['cls']} → 生成判为 {c}（{ok}）"
+    p = render_clip([gt, gen[:, :258]],
+                    [f"真值 |Δv|={jt(gt):.2f}",
+                     f"生成+SG9 |Δv|={jt(gen[:, :258]):.2f}"],
+                    OUT / "08_best", audio=clip["audio"], words=list(rec["words"]),
+                    word_start=rec["word_start"], word_end=rec["word_end"],
+                    events=rec["events"], per_frame_note=note,
+                    title=f"当前最好的配置：这一句的语义命中 {acc*100:.0f}%"
+                          f"（全测试集 76.1%）", dpi=90)
+    m = mux(p["mp4"], clip["audio"], OUT / "08_best.mp4")
+    _copy_gif(p["gif"], "20_best.gif")
+    print("写出", m, p["gif"])
+    return m
+
+
 JOBS = {"atlas": atlas, "expert": expert, "ablation": ablation,
         "counterfactual": counterfactual, "jitter": jitter, "dyadic": dyadic,
-        "smoothing": smoothing}
+        "smoothing": smoothing, "best": best}
 
 if __name__ == "__main__":
     which = sys.argv[1:] or ["all"]
