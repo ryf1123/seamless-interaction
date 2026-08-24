@@ -83,16 +83,20 @@ def generate_clip(cfg, ds, enc, model, rec, dev, steps=25, cfg_w=1.5, seed=0,
     spk = d["spk"][None].to(dev)
     cond = enc(audio, wid, use_text=cfg["text_mode"] != "none")
     T = cond.shape[1]
+    # 训练时给输出加了低通核的模型，采样时噪声也必须低通——否则 ε 的高频没人能抵消。
+    # 这一行忘了传会让 band-limited 那组看起来完全失败（38/40 条测试句都走 sample_long）。
+    ns = cfg.get("smooth_out", 0) if cfg.get("noise_smooth", True) else 0
     if cfg["objective"] == "regress":
         # 确定性回归：没有噪声也没有 ODE，直接一次前向。分段是为了不超位置编码长度。
         out = _regress_forward(model, cond, spk, cfg["window"])
     elif long or T > cfg["window"]:
         g = torch.Generator(device=dev).manual_seed(seed)
         out = sample_long(model, cond, spk, clip_len=cfg["window"], overlap=8,
-                          steps=steps, cfg=cfg_w, generator=g)
+                          steps=steps, cfg=cfg_w, generator=g, noise_smooth=ns)
     else:
         g = torch.Generator(device=dev).manual_seed(seed)
-        out = sample(model, cond, spk, steps=steps, cfg=cfg_w, generator=g)
+        out = sample(model, cond, spk, steps=steps, cfg=cfg_w, generator=g,
+                     noise_smooth=ns)
     m = ds.denorm(out[0].cpu().numpy())
     if smooth:
         # 只平滑身体那 258 维；表情那 137 维不是旋转，不能走同一套正交化

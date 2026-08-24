@@ -122,11 +122,17 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
 @torch.no_grad()
 def sample_long(model, cond: torch.Tensor, spk: torch.Tensor, clip_len: int,
                 overlap: int = 8, steps: int = 25, cfg: float = 1.5,
-                blend: int = 4, generator: torch.Generator | None = None) -> torch.Tensor:
+                blend: int = 4, generator: torch.Generator | None = None,
+                noise_smooth: int = 0) -> torch.Tensor:
     """FOPPAS：分段生成任意长序列，段间用 outpainting 接上。
 
     cond (1,T,Dc)。第一段 overlap=0 自由生成；之后每段把**开头 overlap 帧**钉成
     上一段的结尾（Repaint 式 outpainting），于是接缝天然连续。
+
+    `noise_smooth` 必须一路传下去。踩过的坑：忘了传之后，
+    测试集里 38/40 条句子（都超过训练窗口）走的是这条路径、用的是白噪声，
+    于是 band-limited 那组量出来抖动 22.58×，看着像完全失败；
+    补上之后同一个模型是 2.1×——**全项目最好**。
 
     钉法是近似的（每一步按当前 t 重新加噪再钉回去），所以重叠区里新生成的值
     未必和上一段逐位相同。`blend` 就是为这点准备的：在重叠区上做一次线性交叉淡入，
@@ -150,7 +156,7 @@ def sample_long(model, cond: torch.Tensor, spk: torch.Tensor, clip_len: int,
         else:
             known = mask = None
         seg = sample(model, cond[:, pos:end], spk, steps=steps, cfg=cfg,
-                     known=known, known_mask=mask, generator=generator)
+                     known=known, known_mask=mask, generator=generator, noise_smooth=noise_smooth)
         if ov > 0 and blend > 0:
             b = min(blend, ov)
             w = torch.linspace(0.0, 1.0, b + 2, device=cond.device)[1:-1][None, :, None]

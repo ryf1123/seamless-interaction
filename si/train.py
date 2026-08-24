@@ -172,11 +172,12 @@ def val_sem_acc(cfg, ds, enc, model, dev, n_clips: int = 12, steps: int = 20) ->
         if cfg["objective"] == "regress":
             z = torch.zeros(1, cond.shape[1], model.motion_dim, device=dev)
             out = model(z, torch.ones(1, device=dev), cond, spk)
-        elif cond.shape[1] > cfg["window"]:
+        ns = cfg.get("smooth_out", 0) if cfg.get("noise_smooth", True) else 0
+        if cond.shape[1] > cfg["window"]:
             out = sample_long(model, cond, spk, clip_len=cfg["window"], overlap=8,
-                              steps=steps, cfg=1.5)
+                              steps=steps, cfg=1.5, noise_smooth=ns)
         else:
-            out = sample(model, cond, spk, steps=steps, cfg=1.5)
+            out = sample(model, cond, spk, steps=steps, cfg=1.5, noise_smooth=ns)
         m = ds.denorm(out[0].cpu().numpy())[:, :258]
         a, _ = semantic_accuracy(m, rec["events"])
         if not np.isnan(a):
