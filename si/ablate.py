@@ -70,6 +70,13 @@ SUITES: dict[str, list[dict]] = {
         {"name": "u_shuffle", "desc": "句内换位 · 2000 句", "text_mode": "shuffle"},
         {"name": "u_none", "desc": "没有文本 · 2000 句", "text_mode": "none"},
     ],
+    # 平滑先验：惩罚二阶差分的幅度。notes/15 量出「真值是平滑的但不是带限的」，
+    # 所以正确的约束是二阶导有界，不是带宽有限。基线是 audio_a_token（同条件同步数）。
+    "acc": [
+        {"name": "a1", "desc": "λ_acc=1", "lambda_acc": 1.0},
+        {"name": "a10", "desc": "λ_acc=10", "lambda_acc": 10.0},
+        {"name": "a50", "desc": "λ_acc=50", "lambda_acc": 50.0},
+    ],
     # 第三环：音频表示
     "audio": [
         {"name": "a_mel", "desc": "80 维 log-Mel", "audio_mode": "mel"},
@@ -82,6 +89,7 @@ SUITES: dict[str, list[dict]] = {
 
 
 BASE_CONFIG = {"dyadic": "configs/dyadic.yaml",
+               "acc": "configs/token_base.yaml",
                "objective_2k": "configs/flow_body_2k_multi.yaml",
                "text_2k": "configs/flow_body_2k.yaml",
                "objective_multi": "configs/flow_body_multi.yaml"}

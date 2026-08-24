@@ -1,0 +1,13 @@
+# 离散语音 token 条件的基线配置。用作平滑先验（acc 套件）的对照底座——
+# 对照组就是 runs/audio_a_token（同条件、同 5000 步、λ_acc=0）。
+data: data/toy
+target: body
+audio_mode: token
+text_mode: seq
+objective: flow
+window: 120
+d_model: 256
+depth: 6
+steps: 5000
+batch: 32
+lr: 0.0003

@@ -41,6 +41,11 @@ DEFAULTS = dict(
     sem_clips=12,         # 算 SemAcc 用几条验证句（要采样，比 val loss 贵）。
                           # 12 条太少，只够看趋势，不够挑检查点。
     lambda_vel=1.0,       # 速度损失（DiffSHEG 式 6）：抑制抖动
+    lambda_acc=0.0,       # 加速度惩罚：直接压 |Δ²x̂₀| 的**幅度**（不是误差）。
+                          # 和速度损失不是一回事——后者惩罚 |Δx̂₀ − Δx|（一阶差分的误差）。
+                          # 动机见 notes/15：真值是平滑的但**不是带限的**
+                          # （升余弦起收势一阶连续、抖动 0.270，频谱却延伸到 5–6 Hz），
+                          # 所以要的约束是「二阶导有界」而不是「带宽有限」。
     lambda_huber=0.0,     # Huber 重建损失（DiffSHEG 式 7），作用在 x̂₀ 上
     huber_delta=0.1,
     ema=0.0,              # 权重 EMA 的衰减率（0 = 关）。实测在 5000 步上无效，见 notes/07。
@@ -122,6 +127,10 @@ def loss_fn(cfg, model, enc, batch, dev, gen=None):
     vel = (dv ** 2).mean()
     loss = main + cfg["lambda_vel"] * vel
     parts = {"main": main.item(), "vel": vel.item()}
+    if cfg.get("lambda_acc", 0.0):
+        acc = ((x0[:, 2:] - 2 * x0[:, 1:-1] + x0[:, :-2]) ** 2).mean()
+        loss = loss + cfg["lambda_acc"] * acc
+        parts["acc"] = acc.item()
     if cfg.get("lambda_huber", 0.0):
         # DiffSHEG 式 (7)：直接约束重建出来的 x̂₀，而不是只约束速度
         hub = torch.nn.functional.huber_loss(x0, x, delta=cfg["huber_delta"])
@@ -235,7 +244,8 @@ def train(cfg: dict, name: str) -> Path:
                 rec = {"it": it, "loss": loss.item(), **parts,
                        "lr": lr, "sec": time.time() - t0}
                 log.write(json.dumps(rec) + "\n"); log.flush()
-                extra = f"  huber {parts['huber']:.4f}" if "huber" in parts else ""
+                extra = "".join(f"  {k} {parts[k]:.4f}" for k in ("huber", "acc")
+                                if k in parts)
                 print(f"  it {it:6d}  loss {loss.item():.4f}  "
                       f"main {parts['main']:.4f}  vel {parts['vel']:.4f}{extra}  "
                       f"{time.time()-t0:.0f}s")
