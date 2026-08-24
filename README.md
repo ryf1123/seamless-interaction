@@ -141,6 +141,7 @@ python -m si.render            # 渲染一段带音轨的演示视频
 python -m si.dyadic            # 打印一段双人对话的结构
 python scripts/walkthrough.py  # 把整条链路的形状和数值打印一遍
 python scripts/selfcheck.py    # 跑一遍所有不变量（改了表示层/专家/指标之后先跑这个）
+python scripts/results_table.py # 汇总所有 run 的评测结果（写文档前核对数字有没有过期）
 ```
 
 ## 结果
