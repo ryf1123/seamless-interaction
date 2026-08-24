@@ -21,8 +21,8 @@ from .data_torch import AUDIO_DIMS, MotionData, build_tokenizer
 from .features import SpeechTokenizer
 from .flow import sample, sample_long
 from .gesture_expert import detect_beats
-from .metrics import (MotionAE, beat_align, confusion, diversity, frechet,
-                      jitter, mpjpe_cm, semantic_accuracy)
+from .metrics import (MotionAE, beat_align, beat_align_chance, confusion,
+                      diversity, frechet, jitter, mpjpe_cm, semantic_accuracy)
 from .models.dit import CondEncoder, MotionDiT
 from .train import get_device
 
@@ -256,6 +256,7 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
                      "jitter": jitter(body_p), "jitter_gt": jitter(body_g),
                      "beat_align": beat_align(body_p, ab),
                      "beat_align_gt": beat_align(body_g, ab),
+                     "beat_align_chance": beat_align_chance(body_p, ab, len(body_p), seed=i),
                      "diversity": diversity(samples),
                      "sem_acc": acc, "n_events": len(rec["events"])})
         # FGD 的特征按**窗口**取而不是按整句取：40 句只有 40 个样本，
@@ -275,6 +276,7 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
            "mpjpe_cm": float(np.mean([r["mpjpe_cm"] for r in rows])),
            "beat_align": float(np.mean([r["beat_align"] for r in rows])),
            "beat_align_gt": float(np.mean([r["beat_align_gt"] for r in rows])),
+           "beat_align_chance": float(np.nanmean([r["beat_align_chance"] for r in rows])),
            "diversity": float(np.mean([r["diversity"] for r in rows])),
            "jitter": float(np.mean([r["jitter"] for r in rows])),
            "jitter_gt": float(np.mean([r["jitter_gt"] for r in rows])),
@@ -320,8 +322,12 @@ def main():
     print(f"\n{'='*62}\n{r['run']}  ({r['audio_mode']} / {r['text_mode']} / {r['objective']})")
     print(f"  FGD          {r['fgd']:8.3f}   ↓")
     print(f"  MPJPE        {r['mpjpe_cm']:8.2f} cm ↓")
-    print(f"  BeatAlign    {r['beat_align']:8.3f}   ↑   (真值 {r['beat_align_gt']:.3f})")
+    print(f"  BeatAlign    {r['beat_align']:8.3f}   ↑   (真值 {r['beat_align_gt']:.3f}，"
+          f"同密度随机 {r.get('beat_align_chance', float('nan')):.3f})")
     print(f"  Diversity    {r['diversity']:8.2f} cm")
+    print(f"  抖动 |Δv|    {r.get('jitter', float('nan')):8.2f} cm/帧 ↓  "
+          f"(真值 {r.get('jitter_gt', float('nan')):.3f}，"
+          f"{r.get('jitter_ratio', float('nan')):.1f} 倍)")
     print(f"  SemAcc ★     {r['sem_acc']*100:8.1f} %  ↑   ({r['n_events']} 个语义事件，"
           f"随机基线 {100/len(SEMANTIC_CLASSES):.1f}%)")
     if a.video:

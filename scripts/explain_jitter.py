@@ -35,13 +35,20 @@ def jitter(body: np.ndarray) -> float:
     return float(np.median(np.abs(np.diff(v))))
 
 
-def measure(run: str, n_clips: int = 12, steps: int = 25, cfg_w: float = 1.5,
+def measure(run: str, n_clips: int | None = None, steps: int = 25, cfg_w: float = 1.5,
             dev=None) -> dict:
+    """n_clips=None 表示用**完整测试集**。
+
+    这一点很重要：真值的抖动在不同句子上差异很大（前 8 条 0.138、前 12 条 0.206、
+    全部 40 条 0.270 cm/帧），所以「倍数」会随取样条数变化。
+    早期我用 8 条量出 25 倍并写进了文档，改用完整测试集后是 13 倍——
+    **同一个量必须固定同一个测法**，否则跨实验没法比。
+    """
     cfg, ds, enc, model = load_run(run)
     dev = dev or get_device("mps")
     enc.to(dev).eval(); model.to(dev).eval()
     jg, jt, accs, evs = [], [], [], []
-    for i, rec in enumerate(ds.recs[:n_clips]):
+    for i, rec in enumerate(ds.recs if n_clips is None else ds.recs[:n_clips]):
         gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps=steps,
                                cfg_w=cfg_w, seed=i)
         gt = ds.denorm(d["motion"].numpy())
@@ -54,7 +61,7 @@ def measure(run: str, n_clips: int = 12, steps: int = 25, cfg_w: float = 1.5,
             "sem_acc": float(np.average(accs, weights=evs)) if accs else float("nan")}
 
 
-def sweep(run: str, n_clips: int = 10) -> list[dict]:
+def sweep(run: str, n_clips: int | None = 20) -> list[dict]:
     """推理参数扫描：CFG 权重 × ODE 步数。**不需要重训。**"""
     dev = get_device("mps")
     out = []
@@ -73,12 +80,13 @@ def main():
     ap.add_argument("--runs", nargs="*", default=[])
     ap.add_argument("--labels", nargs="*", default=None)
     ap.add_argument("--sweep", default=None)
-    ap.add_argument("--n-clips", type=int, default=12)
+    ap.add_argument("--n-clips", type=int, default=0, help="0 = 完整测试集")
     a = ap.parse_args()
 
+    n = a.n_clips or None
     if a.sweep:
-        print(f"推理参数扫描（{a.sweep}，不重训）：")
-        rows = sweep(a.sweep, a.n_clips)
+        print(f"推理参数扫描（{a.sweep}，不重训，{n or '完整测试集'} 条句子）：")
+        rows = sweep(a.sweep, n)
         Path("runs/jitter_sweep.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1))
         cws = sorted({r["cfg_w"] for r in rows}); sts = sorted({r["steps"] for r in rows})
         J = np.array([[next(r["ratio"] for r in rows if r["cfg_w"] == c and r["steps"] == s)
@@ -109,7 +117,7 @@ def main():
               f"{best['ratio']:.2f}× 真值，SemAcc {best['sem_acc']*100:.1f}%")
         return
 
-    rows = [measure(r, a.n_clips) for r in a.runs]
+    rows = [measure(r, n) for r in a.runs]
     labels = a.labels or [Path(r).name for r in a.runs]
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
     ax = axes[0]

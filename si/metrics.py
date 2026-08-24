@@ -53,12 +53,41 @@ def motion_beats(body: np.ndarray, fps: float = 30.0) -> np.ndarray:
 
 def beat_align(body: np.ndarray, audio_beats: np.ndarray, fps: float = 30.0,
                sigma: float = 3.0) -> float:
-    """每个音频节拍到最近动作节拍的距离，取 exp(-d²/2σ²) 的均值。越大越对齐。"""
+    """每个音频节拍到最近动作节拍的距离，取 exp(-d²/2σ²) 的均值。越大越对齐。
+
+    **单独看这个数是没有意义的**，必须和 `beat_align_chance` 比。
+    动作节拍撒得越密，这个分越高——和反馈 F1 犯的是同一个毛病
+    （只奖励召回，不惩罚滥竽充数）。本项目实测：欠训模型的 BeatAlign 高于真值。
+    """
     mb = motion_beats(body, fps)
     if len(mb) == 0 or len(audio_beats) == 0:
         return 0.0
     d = np.abs(audio_beats[:, None] - mb[None, :]).min(1)
     return float(np.exp(-d ** 2 / (2 * sigma ** 2)).mean())
+
+
+def beat_align_chance(body: np.ndarray, audio_beats: np.ndarray, n_frames: int,
+                      fps: float = 30.0, sigma: float = 3.0, reps: int = 40,
+                      seed: int = 0) -> float:
+    """**同密度随机**的 BeatAlign 基线：动作节拍个数不变，位置随机重排。
+
+    这样得到的分只反映「撒了多密」，不反映「撒得对不对」。
+    模型分数减去它，才是真正学到的对齐。
+    """
+    mb = motion_beats(body, fps)
+    if len(mb) == 0 or len(audio_beats) == 0:
+        return float("nan")
+    rng = np.random.default_rng(seed)
+    gaps = np.diff(np.sort(mb))
+    out = []
+    for _ in range(reps):
+        # 保持节拍个数和最小间隔的分布，只打乱位置
+        rand = np.sort(rng.choice(np.arange(1, max(n_frames - 1, 2)),
+                                  size=min(len(mb), max(n_frames - 2, 1)),
+                                  replace=False))
+        d = np.abs(audio_beats[:, None] - rand[None, :]).min(1)
+        out.append(np.exp(-d ** 2 / (2 * sigma ** 2)).mean())
+    return float(np.mean(out))
 
 
 def jitter(body: np.ndarray) -> float:
