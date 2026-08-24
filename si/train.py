@@ -32,6 +32,8 @@ DEFAULTS = dict(
     n_tokens=200, steps=8000, batch=32, lr=3e-4, warmup=200, cond_dropout=0.2,
     weight_decay=0.0, log_every=100, val_every=500, seed=0, device="mps",
     lambda_vel=1.0,       # 速度损失（DiffSHEG 式 6）：抑制抖动
+    lambda_huber=0.0,     # Huber 重建损失（DiffSHEG 式 7），作用在 x̂₀ 上
+    huber_delta=0.1,
 )
 
 
@@ -101,7 +103,14 @@ def loss_fn(cfg, model, enc, batch, dev, gen=None):
         x0 = pred
     dv = (x0[:, 1:] - x0[:, :-1]) - (x[:, 1:] - x[:, :-1])
     vel = (dv ** 2).mean()
-    return main + cfg["lambda_vel"] * vel, {"main": main.item(), "vel": vel.item()}
+    loss = main + cfg["lambda_vel"] * vel
+    parts = {"main": main.item(), "vel": vel.item()}
+    if cfg.get("lambda_huber", 0.0):
+        # DiffSHEG 式 (7)：直接约束重建出来的 x̂₀，而不是只约束速度
+        hub = torch.nn.functional.huber_loss(x0, x, delta=cfg["huber_delta"])
+        loss = loss + cfg["lambda_huber"] * hub
+        parts["huber"] = hub.item()
+    return loss, parts
 
 
 def train(cfg: dict, name: str) -> Path:
@@ -146,8 +155,9 @@ def train(cfg: dict, name: str) -> Path:
                 rec = {"it": it, "loss": loss.item(), **parts,
                        "lr": lr, "sec": time.time() - t0}
                 log.write(json.dumps(rec) + "\n"); log.flush()
+                extra = f"  huber {parts['huber']:.4f}" if "huber" in parts else ""
                 print(f"  it {it:6d}  loss {loss.item():.4f}  "
-                      f"main {parts['main']:.4f}  vel {parts['vel']:.4f}  "
+                      f"main {parts['main']:.4f}  vel {parts['vel']:.4f}{extra}  "
                       f"{time.time()-t0:.0f}s")
             if it % cfg["val_every"] == 0 or it == cfg["steps"]:
                 model.eval()

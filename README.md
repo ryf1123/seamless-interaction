@@ -20,6 +20,48 @@
 姊妹项目：[starvla](https://github.com/ryf1123/starvla)（视觉-语言-动作）、
 [sonic](https://github.com/ryf1123/sonic)（人形运控）。
 
+## 先看视频（手势这种东西，看动的比看静的清楚）
+
+六段视频都在 [`videos/`](videos/)，带音轨的 `.mp4` 用来正常观看，下面内嵌的是 GIF 版。
+
+### 1. 13 个语义手势长什么样
+
+每个手势都念出触发它的词。这是整个项目的"词表"。
+
+[▶ videos/01_gesture_atlas.mp4](videos/01_gesture_atlas.mp4)（带音轨，20 秒）
+
+### 2. 一条句子的完整专家动作
+
+底下是波形 + 词条，当前词加粗，粉色带是语义手势的时间窗；手腕拖尾能看出运动方向。
+
+![expert](docs/figs/11_expert.gif)
+
+### 3. 同一条语音，只改文本条件 ★
+
+**这是本项目最有说服力的一张。** 左起：真值、`seq`（逐帧词 id）、`shuffle`、`bow`、`none`。
+只有 `seq` 那一路的姿态在不同语义词上真的变化；另外三路基本是同一个姿势重复。
+
+![text ablation](docs/figs/12_text_ablation.gif)
+
+### 4. 同一条语音，只换一个词
+
+音频一个采样点都没动，只把文本条件里的 `high` 换成 `low`，生成的手势从"向上"翻成"向下"。
+
+![counterfactual](docs/figs/15_counterfactual.gif)
+
+### 5. 真值 vs 生成：抖动
+
+注意手部拖尾。真值（蓝）是光滑的弧线，生成（红）是毛刺。
+这一条是当前最大的质量瓶颈，量化结果见下面的"抖动"一节。
+
+![jitter](docs/figs/13_jitter.gif)
+
+### 6. 双人：倾听时的点头
+
+反馈动作只出现在"我在听"的区间里。
+
+![dyadic](docs/figs/14_dyadic.gif)
+
 ## 这个项目在回答什么
 
 **text → gesture 里，text 到底贡献了什么？**

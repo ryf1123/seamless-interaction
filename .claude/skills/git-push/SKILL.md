@@ -34,5 +34,6 @@ git push origin main
 
 - 远端固定 `git@github.com:ryf1123/seamless-interaction.git`，主分支 `main`，不要改 https。
 - 只有用户要求时才提交/推送。
-- 推送前确认 `.gitignore` 排除了 `.venv/`、`data/`、`runs/`、`videos/*.mp4`。
-- `docs/figs/*.png` 和 `*.gif` **要**进 git（文档要用），`docs/figs/*.mp4` 不进。
+- 推送前确认 `.gitignore` 排除了 `.venv/`、`data/`、`runs/`。
+- `docs/figs/*.png` 和 `*.gif` **要**进 git（文档要用）。
+- `videos/*.mp4` 也**要**进 git：教学视频都压在 600 KB 以内，进了 git 才能从 GitHub 直接看。渲染中间产物（`_atlas_*`、`*.wav`）不进。

@@ -43,6 +43,16 @@ SUITES: dict[str, list[dict]] = {
         {"name": "m_regress", "desc": "L1 回归（确定性）· 多峰数据", "objective": "regress",
          "cond_dropout": 0.0},
     ],
+    # 第八环：平滑性。生成动作的 |Δv| 是真值的 25 倍，而推理参数（CFG、ODE 步数）
+    # 完全压不住（扫了 3×4 组，全在 25.2–25.9× 之间）——所以它是训出来的，
+    # 只能从损失函数下手。见 notes/07。
+    "smooth": [
+        {"name": "s_v1", "desc": "λ_v=1（现状）", "lambda_vel": 1.0},
+        {"name": "s_v5", "desc": "λ_v=5", "lambda_vel": 5.0},
+        {"name": "s_v20", "desc": "λ_v=20", "lambda_vel": 20.0},
+        {"name": "s_huber", "desc": "λ_v=5 + Huber 重建损失（DiffSHEG 式 7）",
+         "lambda_vel": 5.0, "lambda_huber": 1.0},
+    ],
     # 第三环：音频表示
     "audio": [
         {"name": "a_mel", "desc": "80 维 log-Mel", "audio_mode": "mel"},

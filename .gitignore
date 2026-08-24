@@ -4,7 +4,7 @@ runs/
 third_party/
 __pycache__/
 *.pyc
-videos/*.mp4
 videos/*.wav
 docs/figs/*.mp4
+# videos/ 里的教学视频都压在 600 KB 以内，进 git，这样从 GitHub 上就能直接看
 .DS_Store
