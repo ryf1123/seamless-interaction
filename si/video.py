@@ -76,7 +76,8 @@ def render_clip(motions: list[np.ndarray], labels: list[str], out: str | Path,
     """渲染 1..N 套动作的同屏视频。返回 {'mp4':路径, 'gif':路径}。"""
     import imageio.v2 as imageio
     out = Path(out); out.parent.mkdir(parents=True, exist_ok=True)
-    J = [joints_from_body(m) for m in motions]
+    JR = [joints_from_body(m, return_rot=True) for m in motions]
+    J = [x[0] for x in JR]; RG = [x[1] for x in JR]
     T = min(len(x) for x in J)
     n = len(J)
     colors = colors or ([BLUE] + [RED] * (n - 1))
@@ -89,7 +90,7 @@ def render_clip(motions: list[np.ndarray], labels: list[str], out: str | Path,
         for k in range(n):
             for vi, (ai, bi, vn) in enumerate(views):
                 ax = fig.add_subplot(gs[0, k * nv + vi])
-                draw(ax, J[k][t], ai, bi, colors[k], trail=J[k][:t + 1])
+                draw(ax, J[k][t], ai, bi, colors[k], trail=J[k][:t + 1], R=RG[k][t])
                 if t == 0 or True:
                     ax.set_title(f"{labels[k]} · {vn}" if nv > 1 else labels[k],
                                  fontsize=9.5, color=colors[k])
