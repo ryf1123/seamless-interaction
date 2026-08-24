@@ -48,8 +48,9 @@ def savgol_smooth(body: np.ndarray, window: int, poly: int = 2) -> np.ndarray:
     return matrix_to_rot6d(rot6d_to_matrix(sm.reshape(len(sm), -1, 6))).reshape(len(sm), -1)
 
 
-def lowpass_noise(shape, device, window: int, generator=None) -> torch.Tensor:
-    """低通高斯噪声：先抽白噪声，再沿时间轴过一个 Hann 核，然后重新归一化到单位方差。
+def lowpass_noise(shape, device, window: int, generator=None,
+                  kind: str = "hann") -> torch.Tensor:
+    """低通高斯噪声：先抽白噪声，再沿时间轴过一个低通核，然后重新归一化到单位方差。
 
     为什么需要它：flow matching 的样本是 x(1) = ε + ∫v dt。
     如果只把网络输出的 v 限制成低频（`MotionDiT(smooth_out=...)`），
@@ -63,8 +64,8 @@ def lowpass_noise(shape, device, window: int, generator=None) -> torch.Tensor:
     e = torch.randn(shape, device=device, generator=generator)
     if window < 3:
         return e
-    k = torch.hann_window(window + 2, device=device)[1:-1]
-    k = (k / k.sum())[None, None]
+    from .models.dit import smooth_taps
+    k = smooth_taps(window, kind).to(device)[None, None]
     B, T, D = e.shape
     y = e.transpose(1, 2).reshape(-1, 1, T)
     y = torch.nn.functional.pad(y, (window // 2, window // 2), mode="replicate")
@@ -86,7 +87,8 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
            cfg: float = 1.5, null_spk: int | None = None,
            known: torch.Tensor | None = None, known_mask: torch.Tensor | None = None,
            generator: torch.Generator | None = None,
-           noise_smooth: int = 0) -> torch.Tensor:
+           noise_smooth: int = 0,
+                noise_kind: str = "hann") -> torch.Tensor:
     """从噪声解 ODE 生成动作。
 
     known / known_mask 用于 outpainting：mask 为 1 的位置在每一步之后都被
@@ -94,7 +96,7 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
     """
     B, T, _ = cond.shape
     dev = cond.device
-    x = (lowpass_noise((B, T, model.motion_dim), dev, noise_smooth, generator)
+    x = (lowpass_noise((B, T, model.motion_dim), dev, noise_smooth, generator, noise_kind)
          if noise_smooth else
          torch.randn(B, T, model.motion_dim, device=dev, generator=generator))
     dt = 1.0 / steps
@@ -109,7 +111,7 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
         if known is not None:
             # 已知帧按当前 t 的插值位置钉回去
             tt = (i + 1) * dt
-            eps = (lowpass_noise(x.shape, dev, noise_smooth, generator)
+            eps = (lowpass_noise(x.shape, dev, noise_smooth, generator, noise_kind)
                    if noise_smooth else
                    torch.randn(x.shape, device=dev, generator=generator))
             x_known = tt * known + (1.0 - (1.0 - SIGMA_MIN) * tt) * eps
@@ -123,7 +125,8 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
 def sample_long(model, cond: torch.Tensor, spk: torch.Tensor, clip_len: int,
                 overlap: int = 8, steps: int = 25, cfg: float = 1.5,
                 blend: int = 4, generator: torch.Generator | None = None,
-                noise_smooth: int = 0) -> torch.Tensor:
+                noise_smooth: int = 0,
+                noise_kind: str = "hann") -> torch.Tensor:
     """FOPPAS：分段生成任意长序列，段间用 outpainting 接上。
 
     cond (1,T,Dc)。第一段 overlap=0 自由生成；之后每段把**开头 overlap 帧**钉成
@@ -156,7 +159,8 @@ def sample_long(model, cond: torch.Tensor, spk: torch.Tensor, clip_len: int,
         else:
             known = mask = None
         seg = sample(model, cond[:, pos:end], spk, steps=steps, cfg=cfg,
-                     known=known, known_mask=mask, generator=generator, noise_smooth=noise_smooth)
+                     known=known, known_mask=mask, generator=generator,
+                     noise_smooth=noise_smooth, noise_kind=noise_kind)
         if ov > 0 and blend > 0:
             b = min(blend, ov)
             w = torch.linspace(0.0, 1.0, b + 2, device=cond.device)[1:-1][None, :, None]

@@ -77,6 +77,16 @@ SUITES: dict[str, list[dict]] = {
         {"name": "a10", "desc": "λ_acc=10", "lambda_acc": 10.0},
         {"name": "a50", "desc": "λ_acc=50", "lambda_acc": 50.0},
     ],
+    # 把 Savitzky-Golay 投影放进训练：输出核、噪声、**训练目标**三处用同一个 SG 核。
+    # 这是 notes/16 列的第 3 条，也是 notes/12 那条失败路线的正确版本
+    # （之前用 Hann 核会压矮峰，而且只投影输出、没投影目标）。
+    # 天花板已量：SG 窗口 7 滤过的真值 SemAcc 97.8%，窗口 9 是 86.1%（对照现有最好 73–76%）。
+    "sgproj": [
+        {"name": "sg7", "desc": "SG 投影 窗口 7（天花板 97.8%）", "smooth_out": 7,
+         "smooth_kind": "savgol", "target_smooth": 7},
+        {"name": "sg9", "desc": "SG 投影 窗口 9（天花板 86.1%）", "smooth_out": 9,
+         "smooth_kind": "savgol", "target_smooth": 9},
+    ],
     # 第三环：音频表示
     "audio": [
         {"name": "a_mel", "desc": "80 维 log-Mel", "audio_mode": "mel"},
@@ -90,6 +100,7 @@ SUITES: dict[str, list[dict]] = {
 
 BASE_CONFIG = {"dyadic": "configs/dyadic.yaml",
                "acc": "configs/token_base.yaml",
+               "sgproj": "configs/token_base.yaml",
                "objective_2k": "configs/flow_body_2k_multi.yaml",
                "text_2k": "configs/flow_body_2k.yaml",
                "objective_multi": "configs/flow_body_multi.yaml"}

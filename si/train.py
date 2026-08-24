@@ -51,6 +51,12 @@ DEFAULTS = dict(
     ema=0.0,              # 权重 EMA 的衰减率（0 = 关）。实测在 5000 步上无效，见 notes/07。
     noise_smooth=True,    # smooth_out>0 时，是否把噪声 ε 也过同一个低通核。
                           # 必须开：否则 ε 的高频成分模型够不着，整个想法失效。
+    smooth_kind="hann",   # 输出端低通核的形状：hann（简单加权平均，会压矮峰）
+                          # 或 savgol（局部二阶多项式拟合，为「保住峰」设计）。见 notes/16。
+    target_smooth=0,      # 把**训练目标**也用同样的核投影一遍（0 = 关）。
+                          # 只投影输出、不投影目标的话，模型要在通带外做无用功——
+                          # notes/12 那次失败就是这么来的。
+                          # 上限已量：SG 窗口 9 滤过的真值 SemAcc 是 86.1%（窗口 7 是 97.8%）。
     smooth_out=0,         # 模型输出端固定低通核的宽度（帧，0 = 关）。
                           # 把「平滑」写进函数类，训练时模型能补偿它。
 )
@@ -69,7 +75,8 @@ def build_all(cfg: dict):
         return _build_dyadic(cfg)
     tok = build_tokenizer(cfg["data"], cfg["n_tokens"]) if cfg["audio_mode"] == "token" else None
     kw = dict(root=cfg["data"], window=cfg["window"], audio_mode=cfg["audio_mode"],
-              text_mode=cfg["text_mode"], target=cfg["target"], tokenizer=tok)
+              text_mode=cfg["text_mode"], target=cfg["target"], tokenizer=tok,
+              target_smooth=cfg.get("target_smooth", 0))
     tr = MotionData(split="train", **kw)
     va = MotionData(split="val", stats=tr.stats, vocab=tr.vocab, **kw)
     audio_dim = AUDIO_DIMS.get(cfg["audio_mode"], 1)
@@ -78,7 +85,8 @@ def build_all(cfg: dict):
     n_spk = max(r["speaker_id"] for r in tr.all_recs) + 1
     model = MotionDiT(tr[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
                       cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8,
-                      n_speakers=n_spk, smooth_out=cfg.get("smooth_out", 0))
+                      n_speakers=n_spk, smooth_out=cfg.get("smooth_out", 0),
+                      smooth_kind=cfg.get("smooth_kind", "hann"))
     return tr, va, enc, model, tok
 
 

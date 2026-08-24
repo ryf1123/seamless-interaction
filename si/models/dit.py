@@ -22,6 +22,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def smooth_taps(window: int, kind: str = "hann") -> torch.Tensor:
+    """输出端低通核的抽头系数。
+
+    kind="hann"   —— 简单的加权平均。会把峰压矮。
+    kind="savgol" —— Savitzky-Golay（局部二阶多项式拟合）。**它是为「去噪但保住峰的
+                     高度和宽度」设计的**（1964 年做色谱/光谱用的），
+                     而语义手势要的正是这个形状：滤掉抖动、别把起手的峰压钝。
+                     实测事后用它滤生成结果，SemAcc 不降反升（+5.8 个百分点），
+                     而 Hann 核那一版掉了 10 点。见 notes/16。
+    """
+    w = window if window % 2 else window + 1
+    if kind == "savgol":
+        from scipy.signal import savgol_coeffs
+        k = torch.tensor(savgol_coeffs(w, min(2, w - 1)), dtype=torch.float32)
+        return k                      # SG 系数本身归一化到 sum=1，且可以有负值
+    k = torch.hann_window(w + 2)[1:-1]
+    return k / k.sum()
+
+
 class RMSNorm(nn.Module):
     def __init__(self, d: int, eps: float = 1e-6):
         super().__init__()
@@ -84,7 +103,7 @@ class MotionDiT(nn.Module):
 
     def __init__(self, motion_dim: int, cond_dim: int, d: int = 256, depth: int = 6,
                  heads: int = 4, max_len: int = 256, n_speakers: int = 8,
-                 smooth_out: int = 0):
+                 smooth_out: int = 0, smooth_kind: str = "hann"):
         super().__init__()
         self.motion_dim, self.cond_dim, self.max_len = motion_dim, cond_dim, max_len
         self.x_proj = nn.Linear(motion_dim, d)
@@ -109,9 +128,10 @@ class MotionDiT(nn.Module):
         # 和事后滤波的区别：训练时模型能**补偿**这个核（它知道输出会被滤），
         # 而不是训完再被动地滤一遍。
         self.smooth_out = smooth_out
+        self.smooth_kind = smooth_kind
         if smooth_out and smooth_out >= 3:
-            k = torch.hann_window(smooth_out + 2)[1:-1]
-            self.register_buffer("smooth_kernel", (k / k.sum())[None, None])
+            self.register_buffer("smooth_kernel",
+                                 smooth_taps(smooth_out, smooth_kind)[None, None])
 
     def forward(self, x, t, cond, spk):
         """x (B,T,Dm) 噪声动作；t (B,) ∈[0,1]；cond (B,T,Dc)；spk (B,) 说话人 id。"""

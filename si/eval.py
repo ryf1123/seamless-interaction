@@ -41,7 +41,8 @@ def load_run(run: str | Path, ckpt: str = "best.pt", raw: bool = False):
         tok.centroids = np.load(run / "tokenizer.npy")
     ds = MotionData(root=cfg["data"], split="test", window=cfg["window"],
                     audio_mode=cfg["audio_mode"], text_mode=cfg["text_mode"],
-                    target=cfg["target"], stats=stats, vocab=vocab, tokenizer=tok)
+                    target=cfg["target"], stats=stats, vocab=vocab, tokenizer=tok,
+                    target_smooth=cfg.get("target_smooth", 0))
     ck = torch.load(run / ckpt, map_location="cpu", weights_only=False)
     audio_dim = AUDIO_DIMS.get(cfg["audio_mode"], 1)
     enc = CondEncoder(audio_dim, len(vocab) + 1, cfg["d_cond"], cfg["d_word"],
@@ -49,7 +50,8 @@ def load_run(run: str | Path, ckpt: str = "best.pt", raw: bool = False):
     n_spk = max(r["speaker_id"] for r in ds.all_recs) + 1
     model = MotionDiT(ds[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
                       cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8,
-                      n_speakers=n_spk, smooth_out=cfg.get("smooth_out", 0))
+                      n_speakers=n_spk, smooth_out=cfg.get("smooth_out", 0),
+                      smooth_kind=cfg.get("smooth_kind", "hann"))
     # 训练时开了 EMA 的话，`model` 存的就是 EMA 权重；raw=True 取未平均的原始权重
     mk = "model_raw" if (raw and "model_raw" in ck) else "model"
     ek = "enc_raw" if (raw and "enc_raw" in ck) else "enc"
@@ -86,17 +88,19 @@ def generate_clip(cfg, ds, enc, model, rec, dev, steps=25, cfg_w=1.5, seed=0,
     # 训练时给输出加了低通核的模型，采样时噪声也必须低通——否则 ε 的高频没人能抵消。
     # 这一行忘了传会让 band-limited 那组看起来完全失败（38/40 条测试句都走 sample_long）。
     ns = cfg.get("smooth_out", 0) if cfg.get("noise_smooth", True) else 0
+    nk = cfg.get("smooth_kind", "hann")
     if cfg["objective"] == "regress":
         # 确定性回归：没有噪声也没有 ODE，直接一次前向。分段是为了不超位置编码长度。
         out = _regress_forward(model, cond, spk, cfg["window"])
     elif long or T > cfg["window"]:
         g = torch.Generator(device=dev).manual_seed(seed)
         out = sample_long(model, cond, spk, clip_len=cfg["window"], overlap=8,
-                          steps=steps, cfg=cfg_w, generator=g, noise_smooth=ns)
+                          steps=steps, cfg=cfg_w, generator=g, noise_smooth=ns,
+                          noise_kind=nk)
     else:
         g = torch.Generator(device=dev).manual_seed(seed)
         out = sample(model, cond, spk, steps=steps, cfg=cfg_w, generator=g,
-                     noise_smooth=ns)
+                     noise_smooth=ns, noise_kind=nk)
     m = ds.denorm(out[0].cpu().numpy())
     if smooth:
         # 只平滑身体那 258 维；表情那 137 维不是旋转，不能走同一套正交化
