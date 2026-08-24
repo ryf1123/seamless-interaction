@@ -112,7 +112,41 @@ def main():
         print(f"    语义命中 {acc*100:.0f}%  "
               f"（真值→预测：{[(SEMANTIC_CLASSES[x], SEMANTIC_CLASSES[y]) for x,y in pairs]}）")
 
-    print("\n下一步：`python -m si.render` 出一段带音轨的视频，"
+    rule("⑦ 指标的上限与下限  si/metrics.py")
+    print("  只有点估计的指标是读不懂的：0.42 是好是坏，取决于随机基线是 0.41 还是 0.05。")
+    from si.dataset import load_clip, load_index
+    from si.gesture_expert import detect_beats
+    from si.metrics import (beat_align, beat_align_chance, jitter,
+                            semantic_accuracy)
+    try:
+        meta = load_index("data/toy")
+    except Exception:
+        print("  （需要先跑 `python -m si.dataset 400`）")
+        meta = None
+    if meta:
+        test = [r for r in meta["clips"] if r["split"] == "test"][:12]
+        accs, ns, ba, ch, jt = [], [], [], [], []
+        for r in test:
+            d = load_clip("data/toy", r)
+            b = d["body"].astype(np.float64)
+            a, _ = semantic_accuracy(b, r["events"])
+            if not np.isnan(a):
+                accs.append(a); ns.append(len(r["events"]))
+            ab = detect_beats(d["env"])
+            ba.append(beat_align(b, ab)); ch.append(beat_align_chance(b, ab, len(b)))
+            jt.append(jitter(b))
+        print(f"  {'指标':<12}{'下限（随机）':>14}{'上限（真值）':>14}   说明")
+        print(f"  {'SemAcc':<12}{100/len(SEMANTIC_CLASSES):13.1f}%{np.average(accs, weights=ns)*100:13.1f}%"
+              f"   13 类最近邻，真值必须是 100%")
+        print(f"  {'BeatAlign':<12}{np.mean(ch):14.3f}{np.mean(ba):14.3f}"
+              f"   可用区间只有 {np.mean(ba)-np.mean(ch):.3f} 宽 —— 模型普遍在 0.80，高于真值")
+        print(f"  {'抖动 |Δv|':<12}{'—':>14}{np.mean(jt):14.3f}   cm/帧；主基线生成的是 3.83，14 倍")
+        print("\n  规矩：任何「越大越好」的指标进主表之前，先回答")
+        print("    1) 随机猜 / 同密度随机撒点能拿多少分？")
+        print("    2) 把真值喂进去能拿多少分？（不是满分就说明指标本身有损耗）")
+        print("    3) 要比的两组，置信区间会不会重叠？")
+
+    print("\n下一步：`python scripts/make_videos.py all` 出全部教学视频，"
           "或 `python scripts/explain_pipeline.py` 出总览图。")
 
 
