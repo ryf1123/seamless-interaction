@@ -31,6 +31,11 @@ DEFAULTS = dict(
     objective="flow", d_model=256, depth=6, heads=4, d_cond=128, d_word=64,
     n_tokens=200, steps=8000, batch=32, lr=3e-4, warmup=200, cond_dropout=0.2,
     weight_decay=0.0, log_every=100, val_every=500, seed=0, device="mps",
+    sem_every=0,          # 每多少步在验证集上采样算一次 SemAcc（0 = 关）。
+                          # 强烈建议开：实测 val loss 和 SemAcc 会**反向**走——
+                          # token 条件训到 10000 步时 val loss 降到最低（−25%），
+                          # SemAcc 却从 72.3% 掉到 59.1%。按 val loss 选检查点会稳稳选中最差的。
+    sem_clips=12,         # 算 SemAcc 用几条验证句（要采样，比 val loss 贵）
     lambda_vel=1.0,       # 速度损失（DiffSHEG 式 6）：抑制抖动
     lambda_huber=0.0,     # Huber 重建损失（DiffSHEG 式 7），作用在 x̂₀ 上
     huber_delta=0.1,
@@ -142,6 +147,39 @@ class EMA:
         return [{k: v.clone() for k, v in sh.items()} for sh in self.shadow]
 
 
+@torch.no_grad()
+def val_sem_acc(cfg, ds, enc, model, dev, n_clips: int = 12, steps: int = 20) -> float:
+    """在验证集上采样并算 SemAcc。比 val loss 贵，但它才是主指标。
+
+    为什么必须有这个：实测 token 条件下训到 10000 步时，
+    **val loss 一路降到最低（0.1292 → 0.0972，降 25%），SemAcc 却从 72.3% 掉到 59.1%**。
+    按 val loss 选检查点就会稳稳地选中最差的那个。
+    """
+    from .flow import sample, sample_long
+    from .metrics import semantic_accuracy
+    model.eval(); enc.eval()
+    accs, ns = [], []
+    for i, rec in enumerate(ds.recs[:n_clips]):
+        d = ds.full_clip(rec)
+        cond = enc(d["audio"][None].to(dev), d["word_ids"][None].to(dev),
+                   use_text=cfg["text_mode"] != "none")
+        spk = d["spk"][None].to(dev)
+        if cfg["objective"] == "regress":
+            z = torch.zeros(1, cond.shape[1], model.motion_dim, device=dev)
+            out = model(z, torch.ones(1, device=dev), cond, spk)
+        elif cond.shape[1] > cfg["window"]:
+            out = sample_long(model, cond, spk, clip_len=cfg["window"], overlap=8,
+                              steps=steps, cfg=1.5)
+        else:
+            out = sample(model, cond, spk, steps=steps, cfg=1.5)
+        m = ds.denorm(out[0].cpu().numpy())[:, :258]
+        a, _ = semantic_accuracy(m, rec["events"])
+        if not np.isnan(a):
+            accs.append(a); ns.append(len(rec["events"]))
+    model.train(); enc.train()
+    return float(np.average(accs, weights=ns)) if accs else float("nan")
+
+
 def train(cfg: dict, name: str) -> Path:
     torch.manual_seed(cfg["seed"]); np.random.seed(cfg["seed"])
     dev = get_device(cfg["device"])
@@ -167,7 +205,7 @@ def train(cfg: dict, name: str) -> Path:
     vl = DataLoader(va, batch_size=cfg["batch"], shuffle=False)
     ema = EMA([model, enc], cfg["ema"]) if cfg.get("ema", 0.0) else None
     log = (run / "log.jsonl").open("w")
-    it, t0, best = 0, time.time(), 1e9
+    it, t0, best, best_sem = 0, time.time(), 1e9, -1.0
     while it < cfg["steps"]:
         for batch in dl:
             it += 1
@@ -199,6 +237,20 @@ def train(cfg: dict, name: str) -> Path:
                 v = float(np.mean(vs))
                 log.write(json.dumps({"it": it, "val": v}) + "\n"); log.flush()
                 print(f"  it {it:6d}  val {v:.4f}")
+                if cfg.get("sem_every") and it % cfg["sem_every"] == 0:
+                    sa = val_sem_acc(cfg, va, enc, model, dev, cfg["sem_clips"])
+                    log.write(json.dumps({"it": it, "val_sem_acc": sa}) + "\n"); log.flush()
+                    print(f"  it {it:6d}  验证集 SemAcc {sa*100:.1f}%"
+                          f"{'  ← 新高' if sa > best_sem else ''}")
+                    if sa > best_sem:
+                        best_sem = sa
+                        ck = {"model": model.state_dict(), "enc": enc.state_dict(),
+                              "cfg": cfg, "it": it, "val_sem_acc": sa}
+                        if ema is not None:
+                            e_m, e_e = ema.state_dicts()
+                            ck.update(model_raw=ck["model"], enc_raw=ck["enc"],
+                                      model=e_m, enc=e_e)
+                        torch.save(ck, run / "best_sem.pt")
                 if v < best:
                     best = v
                     ck = {"model": model.state_dict(), "enc": enc.state_dict(), "cfg": cfg}
@@ -207,6 +259,9 @@ def train(cfg: dict, name: str) -> Path:
                         e_m, e_e = ema.state_dicts()
                         ck.update(model_raw=ck["model"], enc_raw=ck["enc"],
                                   model=e_m, enc=e_e)
+                    # ⚠️ best.pt 是按 **val loss** 选的，而 val loss 和 SemAcc 会反向走
+                    # （实测 10000 步时 val loss 最低但 SemAcc 掉了 13 个百分点）。
+                    # 开了 sem_every 就会另存一个按 SemAcc 选的 best_sem.pt，评测时用那个。
                     torch.save(ck, run / "best.pt")
     ck = {"model": model.state_dict(), "enc": enc.state_dict(), "cfg": cfg}
     if ema is not None:
@@ -214,7 +269,10 @@ def train(cfg: dict, name: str) -> Path:
         ck.update(model_raw=ck["model"], enc_raw=ck["enc"], model=e_m, enc=e_e)
     torch.save(ck, run / "latest.pt")
     log.close()
-    print(f"[{name}] 完成，{time.time()-t0:.0f}s，best val {best:.4f} → {run}")
+    msg = f"[{name}] 完成，{time.time()-t0:.0f}s，best val {best:.4f}"
+    if best_sem >= 0:
+        msg += f"，best 验证集 SemAcc {best_sem*100:.1f}%（存在 best_sem.pt）"
+    print(msg + f" → {run}")
     return run
 
 
