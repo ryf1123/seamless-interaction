@@ -182,7 +182,7 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
     from .dyadic_data import (backchannel_chance, backchannel_scores,
                               partner_coupling)
     dev = get_device(device)
-    cfg, ds, enc, model = load_run(run, ckpt)
+    cfg, ds, enc, model = load_run(run, ckpt, raw=raw)
     enc.to(dev).eval(); model.to(dev).eval()
     recs = ds.recs if max_clips is None else ds.recs[:max_clips]
     ae = fit_fgd_ae(ds, ds[0]["motion"].shape[-1], dev)
@@ -236,11 +236,12 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
 
 def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 3,
              device: str = "mps", max_clips: int | None = None,
-             long: bool = False, ckpt: str = "best.pt", smooth: int = 0) -> dict:
+             long: bool = False, ckpt: str = "best.pt", smooth: int = 0,
+             raw: bool = False) -> dict:
     if yaml.safe_load(Path(run, "config.yaml").read_text()).get("dataset") == "dyadic":
         return evaluate_dyadic(run, steps, cfg_w, device, max_clips, ckpt)
     dev = get_device(device)
-    cfg, ds, enc, model = load_run(run, ckpt)
+    cfg, ds, enc, model = load_run(run, ckpt, raw=raw)
     enc.to(dev).eval(); model.to(dev).eval()
     recs = ds.recs if max_clips is None else ds.recs[:max_clips]
     dim = ds[0]["motion"].shape[-1]
@@ -293,7 +294,7 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
                                        weights=[r["n_events"] for r in ok])),
            "n_events": int(sum(r["n_events"] for r in rows)),
            "audio_mode": cfg["audio_mode"], "text_mode": cfg["text_mode"],
-           "objective": cfg["objective"], "smooth": smooth,
+           "objective": cfg["objective"], "smooth": smooth, "raw_weights": raw,
            "confusion": confusion(pairs).tolist(), "classes": SEMANTIC_CLASSES,
            "per_clip": rows}
     Path(run, "eval.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
@@ -308,13 +309,19 @@ def main():
     ap.add_argument("--max-clips", type=int, default=None)
     ap.add_argument("--ckpt", default="best.pt")
     ap.add_argument("--long", action="store_true")
+    ap.add_argument("--raw", action="store_true",
+                    help="用**未做 EMA 平均**的原始权重。训练时开了 ema 才有意义——"
+                         "同一条训练轨迹上比 EMA 和原始，是最干净的对照")
+    ap.add_argument("--out", default=None, help="把 eval.json 写到别的名字，避免覆盖")
     ap.add_argument("--smooth", type=int, default=0,
                     help="推理后 Savitzky-Golay 平滑的窗口（帧）。默认 0 = 关。"
                          "实测 9（300 ms）是甜点：抖动降 73%%、MPJPE 降 22%%、SemAcc 不降")
     ap.add_argument("--video", type=int, default=0, help="额外渲染前 N 条对比视频")
     a = ap.parse_args()
     r = evaluate(a.run, steps=a.steps, cfg_w=a.cfg, max_clips=a.max_clips,
-                 long=a.long, ckpt=a.ckpt, smooth=a.smooth)
+                 long=a.long, ckpt=a.ckpt, smooth=a.smooth, raw=a.raw)
+    if a.out:
+        Path(a.run, a.out).write_text(json.dumps(r, ensure_ascii=False, indent=1))
     if r.get("dataset") == "dyadic":
         print(f"\n{'='*62}\n{r['run']}  (partner={r['partner']})")
         print(f"  FGD              {r['fgd']:8.3f}   ↓")
@@ -329,7 +336,8 @@ def main():
         print(f"  （旧的软对齐分     {r['backchannel_align']:8.3f}，只奖励召回，仅供参考）")
         print(f"  生成的点头 {r['n_pred_nod']} 个 / 真值 {r['n_gt_nod']} 个")
         return
-    sm = f" / 平滑窗口 {r['smooth']}" if r.get("smooth") else ""
+    sm = (f" / 平滑窗口 {r['smooth']}" if r.get("smooth") else "") + \
+         (" / 原始权重（非 EMA）" if r.get("raw_weights") else "")
     print(f"\n{'='*62}\n{r['run']}  ({r['audio_mode']} / {r['text_mode']} / {r['objective']}{sm})")
     print(f"  FGD          {r['fgd']:8.3f}   ↓")
     print(f"  MPJPE        {r['mpjpe_cm']:8.2f} cm ↓")
