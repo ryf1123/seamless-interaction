@@ -317,6 +317,7 @@ notes/                每一环一页笔记
 - [PLAN.md](PLAN.md) —— 七环计划
 - [docs/improve.md](docs/improve.md) —— **怎么把效果做上去**：按性价比排的清单，每条写清成本、预期收益、怎么验证、依据；含已验证无效的（推理参数）和意外有效的（音频条件换成离散 token，FGD 5.05 → 0.39）
 - [docs/literature.md](docs/literature.md) —— **文献地图**：这条线是怎么走过来的、每一步在解什么问题、本项目复现了什么又修正了什么；含 GENEA 挑战赛关于「客观指标不可信」和「对话者适配性接近随机」的两条结论
+- **[docs/one-page.md](docs/one-page.md) —— ★ 从这里开始读**：结论、支撑数字、边界、方法纪律、下一步
 - [docs/cross-project.md](docs/cross-project.md) —— **五个项目撞到的同一批墙**：横向并排的数字和出处
 - [docs/concepts.md](docs/concepts.md) —— **概念速查**：每个设计决策是什么 / 为什么 / 在哪个文件 / 出自哪篇论文；训练曲线怎么看；建议的阅读顺序
 - [notes/00-表示与数据.md](notes/00-表示与数据.md) —— 258 维是怎么来的、数据是怎么造的、踩了哪些坑
