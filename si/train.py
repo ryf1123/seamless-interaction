@@ -32,10 +32,14 @@ DEFAULTS = dict(
     n_tokens=200, steps=8000, batch=32, lr=3e-4, warmup=200, cond_dropout=0.2,
     weight_decay=0.0, log_every=100, val_every=500, seed=0, device="mps",
     sem_every=0,          # 每多少步在验证集上采样算一次 SemAcc（0 = 关）。
-                          # 强烈建议开：实测 val loss 和 SemAcc 会**反向**走——
-                          # token 条件训到 10000 步时 val loss 降到最低（−25%），
-                          # SemAcc 却从 72.3% 掉到 59.1%。按 val loss 选检查点会稳稳选中最差的。
-    sem_clips=12,         # 算 SemAcc 用几条验证句（要采样，比 val loss 贵）
+                          # 背景：val loss 和 SemAcc 会**反向**走——token 条件训到 10000 步时
+                          # val loss 降到最低（−25%），SemAcc 却从 72.3% 掉到 59.1%。
+                          # ⚠️ 但**按 SemAcc 选检查点目前不可靠**：12 条验证句的
+                          # SemAcc 标准误约 ±8 个百分点，比要检测的差异还大。
+                          # 实测在 v3b 上它选中了更差的检查点（56.9% vs 62.0%）。
+                          # 要用它，先把 sem_clips 提到 40+。见 notes/11。
+    sem_clips=12,         # 算 SemAcc 用几条验证句（要采样，比 val loss 贵）。
+                          # 12 条太少，只够看趋势，不够挑检查点。
     lambda_vel=1.0,       # 速度损失（DiffSHEG 式 6）：抑制抖动
     lambda_huber=0.0,     # Huber 重建损失（DiffSHEG 式 7），作用在 x̂₀ 上
     huber_delta=0.1,
