@@ -45,8 +45,8 @@ def bars(ax, labels, vals, cis=None, color=BLUE, floor=None, floor_lb="随机基
 
 
 def main():
-    fig, axes = plt.subplots(2, 3, figsize=(15.5, 8.6))
-    fig.subplots_adjust(hspace=0.55, wspace=0.28)
+    fig, axes = plt.subplots(2, 4, figsize=(20.5, 8.8))
+    fig.subplots_adjust(hspace=0.62, wspace=0.34, top=0.86)
 
     # ① 第二环：文本
     ax = axes[0, 0]
@@ -123,23 +123,69 @@ def main():
         ax.set_xlabel("ODE 步数", fontsize=8.5); ax.set_ylabel("抖动 / 真值", fontsize=8.5)
         ax.axhline(1.0, color=GREEN, ls=":", lw=1.3)
         ax.text(10, 1.6, "真值水平", fontsize=7.5, color=GREEN)
-    ax.set_title("⑤ 抖动：推理参数完全压不住\n12 组全在 25.2–25.9 倍 —— 它是训出来的",
+    ax.set_title("⑤ 抖动：推理参数完全压不住\n12 组全在 14.6–15.1 倍 —— 它是训出来的",
                  fontsize=10, loc="left")
 
-    # ⑥ 指标可信度
+    # ⑥ 推理后平滑
     ax = axes[1, 2]
+    q = Path("runs/savgol_sweep.json")
+    if q.exists():
+        rows = json.loads(q.read_text())
+        gtj = rows[0]["jitter_gt"]
+        w = [r["window"] for r in rows]
+        ax.plot(w, [r["jitter"] / gtj for r in rows], "-o", color=RED, lw=2, ms=4)
+        ax.axhline(1.0, color=GREEN, ls=":", lw=1.3)
+        ax.text(w[-1], 1.6, "真值水平", fontsize=7.5, color=GREEN, ha="right")
+        ax.set_xlabel("SG 窗口（帧）", fontsize=8.5)
+        ax.set_ylabel("抖动 / 真值 ↓", color=RED, fontsize=8.5)
+        ax.yaxis.set_label_coords(-0.13, 0.5)
+        ax2 = ax.twinx()
+        ax2.plot(w, [r["sem_acc"] * 100 for r in rows], "-s", color=BLUE, lw=2, ms=4)
+        ax2.set_ylabel("SemAcc (%) ↑", color=BLUE, fontsize=8.5, labelpad=2)
+        best = min((r for r in rows if r["window"]), key=lambda r: -r["sem_acc"])
+        ax.axvline(best["window"], color=GRAY, ls="--", lw=1.0)
+        ax.text(best["window"], ax.get_ylim()[1] * 0.9,
+                f" 窗口 {best['window']}\n {best['window']/30*1000:.0f} ms",
+                fontsize=7.5, color=GRAY)
+    ax.set_title("⑥ 推理后平滑：零成本的最大改善\n抖动降 73%、MPJPE 降 22%、SemAcc 不降反升",
+                 fontsize=10, loc="left")
+
+    # ⑦ 指标可信度
+    ax = axes[1, 3]
     lv = np.array([0.0, 0.005, 0.01, 0.02, 0.04, 0.08, 0.15])
     ba = np.array([0.816, 0.810, 0.763, 0.811, 0.854, 0.829, 0.781])
     mp = np.array([0.00, 0.63, 1.33, 2.56, 5.08, 10.28, 19.30])
     ax.plot(lv, ba, "-o", color=RED, lw=1.8, ms=4, label="BeatAlign（左轴）")
     ax.axhline(ba[0], color=GRAY, ls=":", lw=1.1)
     ax.set_ylabel("BeatAlign", color=RED, fontsize=8.5)
+    ax.yaxis.set_label_coords(-0.15, 0.5)
     ax.set_xlabel("往真值上加的高斯噪声 σ", fontsize=8.5)
     ax2 = ax.twinx()
     ax2.plot(lv, mp, "-s", color=BLUE, lw=1.8, ms=4, label="MPJPE（右轴）")
     ax2.set_ylabel("MPJPE (cm)", color=BLUE, fontsize=8.5)
-    ax.set_title("⑥ 指标会骗人：动作已经是垃圾了\nMPJPE 涨到 19 cm，BeatAlign 纹丝不动",
+    ax.set_title("⑦ 指标会骗人：MPJPE 涨到 19 cm\n（动作已是垃圾），BeatAlign 纹丝不动",
                  fontsize=10, loc="left")
+
+    # ⑧ 三条最该记住的
+    ax = axes[0, 3]; ax.axis("off")
+    ax.text(0.0, 1.0, "三条最该记住的", fontsize=11.5, va="top", weight="bold")
+    ax.text(0.0, 0.90,
+            "① 时间对齐的文本是决定性的。\n"
+            "   seq 62% vs bow/shuffle/none 12–15%\n"
+            "   （随机 7.7%），后三组统计上不可区分\n"
+            "   ——两半信息缺一半，剩下那半\n"
+            "   几乎一文不值。\n\n"
+            "② 每个指标都要有上限和下限。\n"
+            "   BeatAlign 可用区间只有 0.14 宽，\n"
+            "   所有模型都在 0.80——高于真值 0.66。\n"
+            "   反馈 F1 随机基线 0.41，三组模型\n"
+            "   0.41–0.43，全在随机上。\n\n"
+            "③ 三次被「任务设计」绊住，\n"
+            "   不是被模型：\n"
+            "   · count1/2/3 只差手指，几乎不可分\n"
+            "   · 数据几乎确定 → 回归完胜生成式\n"
+            "   · 逐词拼接语音 → 音频没有额外贡献",
+            fontsize=8.4, va="top", linespacing=1.5)
 
     fig.suptitle("seamless-interaction · 记分板：每一格都画出上限和下限，"
                  "只有点估计的图是读不懂的", fontsize=13.5, y=0.98)
