@@ -48,7 +48,8 @@ def load_run(run: str | Path, ckpt: str = "best.pt", raw: bool = False):
                       n_tokens=cfg["n_tokens"] if cfg["audio_mode"] == "token" else 0)
     n_spk = max(r["speaker_id"] for r in ds.all_recs) + 1
     model = MotionDiT(ds[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
-                      cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8, n_speakers=n_spk)
+                      cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8,
+                      n_speakers=n_spk, smooth_out=cfg.get("smooth_out", 0))
     # 训练时开了 EMA 的话，`model` 存的就是 EMA 权重；raw=True 取未平均的原始权重
     mk = "model_raw" if (raw and "model_raw" in ck) else "model"
     ek = "enc_raw" if (raw and "enc_raw" in ck) else "enc"

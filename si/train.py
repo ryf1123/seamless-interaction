@@ -34,8 +34,9 @@ DEFAULTS = dict(
     lambda_vel=1.0,       # 速度损失（DiffSHEG 式 6）：抑制抖动
     lambda_huber=0.0,     # Huber 重建损失（DiffSHEG 式 7），作用在 x̂₀ 上
     huber_delta=0.1,
-    ema=0.0,              # 权重 EMA 的衰减率（0 = 关）。扩散/流模型的标准做法，
-                          # 推理用滑动平均权重，通常能明显压掉高频抖动。
+    ema=0.0,              # 权重 EMA 的衰减率（0 = 关）。实测在 5000 步上无效，见 notes/07。
+    smooth_out=0,         # 模型输出端固定低通核的宽度（帧，0 = 关）。
+                          # 把「平滑」写进函数类，训练时模型能补偿它。
 )
 
 
@@ -61,7 +62,7 @@ def build_all(cfg: dict):
     n_spk = max(r["speaker_id"] for r in tr.all_recs) + 1
     model = MotionDiT(tr[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
                       cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8,
-                      n_speakers=n_spk)
+                      n_speakers=n_spk, smooth_out=cfg.get("smooth_out", 0))
     return tr, va, enc, model, tok
 
 

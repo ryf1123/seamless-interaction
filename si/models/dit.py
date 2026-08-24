@@ -83,7 +83,8 @@ class MotionDiT(nn.Module):
     """
 
     def __init__(self, motion_dim: int, cond_dim: int, d: int = 256, depth: int = 6,
-                 heads: int = 4, max_len: int = 256, n_speakers: int = 8):
+                 heads: int = 4, max_len: int = 256, n_speakers: int = 8,
+                 smooth_out: int = 0):
         super().__init__()
         self.motion_dim, self.cond_dim, self.max_len = motion_dim, cond_dim, max_len
         self.x_proj = nn.Linear(motion_dim, d)
@@ -96,6 +97,21 @@ class MotionDiT(nn.Module):
         self.out = nn.Linear(d, motion_dim)
         nn.init.zeros_(self.out.weight); nn.init.zeros_(self.out.bias)
         self.d = d
+        # 输出端的固定低通核：把「平滑」写进函数类里，而不是事后滤。
+        #
+        # 来路是一串负面结果：采样参数（12 组）无效、权重 EMA 无效、
+        # 速度损失只降 24% 且代价大，而**直接滤输出**降 73%。
+        # 结论是抖动来自「学到的那个函数」本身，所以就改函数类：
+        # 让网络的输出必然是时间上低通的。
+        #
+        # flow matching 预测的是速度场 v，而 x̂₀ = x_t + (1−t)·v 对 v 是线性的，
+        # 所以平滑 v 等价于平滑运动。核固定不训练，用 Hann 窗归一化。
+        # 和事后滤波的区别：训练时模型能**补偿**这个核（它知道输出会被滤），
+        # 而不是训完再被动地滤一遍。
+        self.smooth_out = smooth_out
+        if smooth_out and smooth_out >= 3:
+            k = torch.hann_window(smooth_out + 2)[1:-1]
+            self.register_buffer("smooth_kernel", (k / k.sum())[None, None])
 
     def forward(self, x, t, cond, spk):
         """x (B,T,Dm) 噪声动作；t (B,) ∈[0,1]；cond (B,T,Dc)；spk (B,) 说话人 id。"""
@@ -105,7 +121,14 @@ class MotionDiT(nn.Module):
         g = self.t_emb(timestep_embedding(t, self.d)) + self.spk(spk)
         for blk in self.blocks:
             h = blk(h, g)
-        return self.out(self.out_norm(h))
+        out = self.out(self.out_norm(h))
+        if self.smooth_out and self.smooth_out >= 3:
+            pad = self.smooth_out // 2
+            y = out.transpose(1, 2).reshape(-1, 1, T)                 # (B*Dm, 1, T)
+            y = F.pad(y, (pad, pad), mode="replicate")
+            y = F.conv1d(y, self.smooth_kernel.to(y.dtype))
+            out = y.reshape(B, -1, T).transpose(1, 2)
+        return out
 
     @property
     def n_params(self) -> int:
