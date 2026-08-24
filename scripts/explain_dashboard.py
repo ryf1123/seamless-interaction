@@ -82,18 +82,28 @@ def main():
     ax = axes[0, 2]
     r = _load("dyadic")
     if r:
+        # 平滑后的结果（eval_smooth9.json）才是能读的：不平滑时抖动被当成点头，
+        # 三组的差异被埋在共同的噪声底下面。见 notes/06 末尾的修订。
+        sm = []
+        for x in r:
+            q = Path("runs") / x["name"] / "eval_smooth9.json"
+            sm.append(json.loads(q.read_text()) if q.exists() else x)
         lb = ["monadic\n只有自己", "dyadic\n+对方语音", "AV\n+对方动作"]
-        f1 = [x["backchannel_f1"] for x in r]
-        ch = [x.get("chance_f1", np.nan) for x in r]
+        f1 = [x["backchannel_f1"] for x in sm]
+        ch = [x.get("chance_f1", np.nan) for x in sm]
         x = np.arange(len(f1))
-        ax.bar(x - 0.19, f1, 0.38, color=BLUE, label="模型")
+        ax.bar(x - 0.19, f1, 0.38, color=BLUE, label="模型（平滑后）")
         ax.bar(x + 0.19, ch, 0.38, color=GRAY, label="同密度随机撒点")
+        for i, (a_, b_) in enumerate(zip(f1, ch)):
+            ax.text(i, max(a_, b_) + 0.02, f"{a_-b_:+.3f}", ha="center",
+                    fontsize=8, color=GREEN if a_ - b_ > 0.04 else GRAY)
         ax.axhline(r[0].get("backchannel_f1_gt", np.nan), color=GREEN, ls=":", lw=1.3)
         ax.text(0.0, r[0].get("backchannel_f1_gt", 0), " 真值上限", fontsize=7.5,
                 color=GREEN, va="bottom")
         ax.set_xticks(x); ax.set_xticklabels(lb, fontsize=8)
         ax.legend(fontsize=7.5); ax.set_ylabel("反馈 F1", fontsize=8.5)
-    ax.set_title("③ 第六环：双人反馈\n三组全在随机基线上——和 GENEA 2023 的结论一致",
+    ax.set_title("③ 第六环：双人反馈（推理后平滑）\n"
+                 "压掉抖动的假阳性后，dyadic/AV 才明显高出随机基线",
                  fontsize=10, loc="left")
 
     # ④ 第三环：音频表示
@@ -184,7 +194,11 @@ def main():
             "   不是被模型：\n"
             "   · count1/2/3 只差手指，几乎不可分\n"
             "   · 数据几乎确定 → 回归完胜生成式\n"
-            "   · 逐词拼接语音 → 音频没有额外贡献",
+            "   · 逐词拼接语音 → 音频没有额外贡献\n\n"
+            "④ 「落在随机基线上」有两种可能：\n"
+            "   真的没学到，或者信号被共同的噪声底埋了。\n"
+            "   第六环就是后者——压掉抖动之后\n"
+            "   dyadic 比 monadic 高 +0.068 [+0.018, +0.120]。",
             fontsize=8.4, va="top", linespacing=1.5)
 
     fig.suptitle("seamless-interaction · 记分板：每一格都画出上限和下限，"
