@@ -48,6 +48,31 @@ def savgol_smooth(body: np.ndarray, window: int, poly: int = 2) -> np.ndarray:
     return matrix_to_rot6d(rot6d_to_matrix(sm.reshape(len(sm), -1, 6))).reshape(len(sm), -1)
 
 
+def lowpass_noise(shape, device, window: int, generator=None) -> torch.Tensor:
+    """低通高斯噪声：先抽白噪声，再沿时间轴过一个 Hann 核，然后重新归一化到单位方差。
+
+    为什么需要它：flow matching 的样本是 x(1) = ε + ∫v dt。
+    如果只把网络输出的 v 限制成低频（`MotionDiT(smooth_out=...)`），
+    **初始噪声 ε 的高频成分没人能抵消**——模型只能输出低频的 v，够不着。
+    结果就是「模型内低通核」这个想法失效。
+
+    让 ε 也待在同一个低频子空间里，整条轨迹就自洽了：
+    x_t = t·x + (1−t)·ε 对所有 t 都低频，目标速度 v = x − ε 也低频。
+    代价是数据里超出通带的成分模型表示不了——而那部分正是我们认为的噪声。
+    """
+    e = torch.randn(shape, device=device, generator=generator)
+    if window < 3:
+        return e
+    k = torch.hann_window(window + 2, device=device)[1:-1]
+    k = (k / k.sum())[None, None]
+    B, T, D = e.shape
+    y = e.transpose(1, 2).reshape(-1, 1, T)
+    y = torch.nn.functional.pad(y, (window // 2, window // 2), mode="replicate")
+    y = torch.nn.functional.conv1d(y, k.to(y.dtype))
+    y = y.reshape(B, D, T).transpose(1, 2)
+    return y / y.std(dim=1, keepdim=True).clamp(min=1e-6)      # 滤波会掉方差，补回来
+
+
 def make_noisy(x: torch.Tensor, t: torch.Tensor, eps: torch.Tensor):
     """返回 (x_t, 目标速度 v)。t 形状 (B,)。"""
     tt = t[:, None, None]
@@ -60,7 +85,8 @@ def make_noisy(x: torch.Tensor, t: torch.Tensor, eps: torch.Tensor):
 def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
            cfg: float = 1.5, null_spk: int | None = None,
            known: torch.Tensor | None = None, known_mask: torch.Tensor | None = None,
-           generator: torch.Generator | None = None) -> torch.Tensor:
+           generator: torch.Generator | None = None,
+           noise_smooth: int = 0) -> torch.Tensor:
     """从噪声解 ODE 生成动作。
 
     known / known_mask 用于 outpainting：mask 为 1 的位置在每一步之后都被
@@ -68,7 +94,9 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
     """
     B, T, _ = cond.shape
     dev = cond.device
-    x = torch.randn(B, T, model.motion_dim, device=dev, generator=generator)
+    x = (lowpass_noise((B, T, model.motion_dim), dev, noise_smooth, generator)
+         if noise_smooth else
+         torch.randn(B, T, model.motion_dim, device=dev, generator=generator))
     dt = 1.0 / steps
     null = torch.full_like(spk, model.spk.num_embeddings - 1 if null_spk is None else null_spk)
     for i in range(steps):
@@ -81,7 +109,9 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
         if known is not None:
             # 已知帧按当前 t 的插值位置钉回去
             tt = (i + 1) * dt
-            eps = torch.randn(x.shape, device=dev, generator=generator)
+            eps = (lowpass_noise(x.shape, dev, noise_smooth, generator)
+                   if noise_smooth else
+                   torch.randn(x.shape, device=dev, generator=generator))
             x_known = tt * known + (1.0 - (1.0 - SIGMA_MIN) * tt) * eps
             x = torch.where(known_mask[..., None].bool(), x_known, x)
     if known is not None:

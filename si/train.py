@@ -22,7 +22,7 @@ import yaml
 from torch.utils.data import DataLoader
 
 from .data_torch import AUDIO_DIMS, MotionData, build_tokenizer
-from .flow import make_noisy
+from .flow import lowpass_noise, make_noisy
 from .models.dit import CondEncoder, MotionDiT
 
 DEFAULTS = dict(
@@ -40,6 +40,8 @@ DEFAULTS = dict(
     lambda_huber=0.0,     # Huber 重建损失（DiffSHEG 式 7），作用在 x̂₀ 上
     huber_delta=0.1,
     ema=0.0,              # 权重 EMA 的衰减率（0 = 关）。实测在 5000 步上无效，见 notes/07。
+    noise_smooth=True,    # smooth_out>0 时，是否把噪声 ε 也过同一个低通核。
+                          # 必须开：否则 ε 的高频成分模型够不着，整个想法失效。
     smooth_out=0,         # 模型输出端固定低通核的宽度（帧，0 = 关）。
                           # 把「平滑」写进函数类，训练时模型能补偿它。
 )
@@ -97,7 +99,10 @@ def loss_fn(cfg, model, enc, batch, dev, gen=None):
         spk = torch.where(drop, torch.full_like(spk, model.spk.num_embeddings - 1), spk)
     if cfg["objective"] == "flow":
         t = torch.rand(B, device=dev)
-        eps = torch.randn(x.shape, device=dev, generator=gen)
+        # 输出端有低通核时，噪声也必须低通，否则 ε 的高频没人能抵消（见 si/flow.py）
+        nz = cfg.get("smooth_out", 0) if cfg.get("noise_smooth", True) else 0
+        eps = (lowpass_noise(x.shape, dev, nz, gen) if nz
+               else torch.randn(x.shape, device=dev, generator=gen))
         x_t, v = make_noisy(x, t, eps)
         pred = model(x_t, t, cond, spk)
         main = ((pred - v) ** 2).mean()
