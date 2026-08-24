@@ -115,7 +115,29 @@ def run_suite(suite: str, base_config: str = "configs/flow_body.yaml",
     for it in items:
         name = f"{suite}_{it['name']}"
         run = Path("runs") / name
-        if not (skip_done and (run / "best.pt").exists()):
+        done = (run / "best.pt").exists()
+        if done and skip_done:
+            # 护栏：跳过重训之前，检查已有的 run 和这次要跑的配置是不是一致。
+            # 踩过的坑：一次中途失败的启动用 --steps 8000 训好了套件里的前两组，
+            # 重启时用 --steps 5000，后两组就只训了 5000 步——
+            # **同一张表里两组 8000 步、两组 5000 步**，而表格上看不出来。
+            import yaml as _yaml
+            old = _yaml.safe_load((run / "config.yaml").read_text())
+            want = load_cfg(BASE_CONFIG.get(suite, base_config), extra)
+            want["steps"] = steps
+            for k, v in it.items():
+                if k not in ("name", "desc"):
+                    want[k] = v
+            diff = {k: (old.get(k), want[k]) for k in want
+                    if k in ("steps", "data", "audio_mode", "text_mode", "objective",
+                             "lambda_vel", "lambda_acc", "lambda_huber", "ema",
+                             "smooth_out", "smooth_kind", "target_smooth")
+                    and old.get(k) != want[k]}
+            if diff:
+                print(f"  !! {name} 已存在但配置不同，重训。差异：" +
+                      ", ".join(f"{k}: {a} → {b}" for k, (a, b) in diff.items()))
+                done = False
+        if not done:
             cfg = load_cfg(base_config, extra)
             cfg["steps"] = steps
             for k, v in it.items():

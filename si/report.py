@@ -150,8 +150,11 @@ def ablation_table(path: str | Path) -> str:
                 cells.append(f"{v*sc:.2f}{unit}")
         lines.append(f"| `{r['name']}` | {r['desc']} | " + " | ".join(cells) + " |")
     lines.append("")
-    lines.append("方括号是按**句子**自助重采样的 95% 区间（2000 次）。"
-                 "测试集只有 40 句，区间重叠的两组不要当成有差别。")
+    n_clip = rows[0].get("n_clips", "?") if rows else "?"
+    n_ev = rows[0].get("n_events", rows[0].get("n_gt_nod", "?")) if rows else "?"
+    lines.append(f"方括号是按**句子**自助重采样的 95% 区间（2000 次）。"
+                 f"测试集 {n_clip} 句 / {n_ev} 个事件，区间重叠的两组不要当成有差别——"
+                 f"但**同测试集上应该做配对检验**（`--paired`），它比看区间重叠灵敏得多。")
     return "\n".join(lines)
 
 
