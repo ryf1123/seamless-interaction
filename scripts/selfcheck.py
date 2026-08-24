@@ -67,6 +67,12 @@ def main():
         b = controls_to_body_feature(home_controls(1) + _semantic_offset(c, np.array([0.5])))
         ok += classify_pose(b, 0) == i
     check("13 个原型姿态各自判回自己", ok == 13, f"{ok}/13")
+    # 镜像原型：单手手势换成左手做，还是同一个类别（多峰数据里 40% 会换手）
+    from si.gesture_expert import mirror_offset
+    okm = sum(classify_pose(controls_to_body_feature(
+        home_controls(1) + mirror_offset(_semantic_offset(c, np.array([0.5])))), 0) == i
+        for i, c in enumerate(SEMANTIC_CLASSES))
+    check("镜像（换手做）的原型也判回同一类", okm == 13, f"{okm}/13")
     D, near, nb = prototype_separation()
     check("类间距中位数 > 3 cm", np.median(near) > 3.0, f"中位 {np.median(near):.2f} cm")
     print(f"       （已知局限：最小类间距 {near.min():.2f} cm，"
@@ -110,6 +116,45 @@ def main():
         # 否则「反馈动作只能由对方语音解释」这句话就不成立
         q = conv["env"][si_][listen].max() if listen.any() else 0.0
         check(f"{name} 倾听时自己的音轨接近静音", q < 0.25, f"最大包络 {q:.3f}")
+
+    print("\n指标的上限与下限")
+    # 这三条对应本项目栽过的三次：指标只有点估计、没有基线，就读不懂
+    from si.metrics import beat_align, beat_align_chance, jitter
+    from si.gesture_expert import detect_beats
+    # data/toy 不存在时上面那段会跳过，meta 就没被赋值——这里必须用 locals() 兜住
+    _meta = locals().get("meta")
+    test = [r for r in _meta["clips"] if r["split"] == "test"][:10] if _meta else []
+    if test:
+        ba, ch, jt = [], [], []
+        for rec in test:
+            d = load_clip("data/toy", rec)
+            b = d["body"].astype(np.float64)
+            ab = detect_beats(d["env"])
+            ba.append(beat_align(b, ab)); ch.append(beat_align_chance(b, ab, len(b)))
+            jt.append(jitter(b))
+        ba_m, ch_m = float(np.mean(ba)), float(np.mean(ch))
+        check("BeatAlign：真值高于同密度随机基线", ba_m > ch_m,
+              f"真值 {ba_m:.3f} vs 随机 {ch_m:.3f}，可用区间只有 {ba_m - ch_m:.3f} 宽")
+        rng = np.random.default_rng(0)
+        nj = [jitter(load_clip("data/toy", r)["body"].astype(np.float64)
+                     + rng.standard_normal(load_clip("data/toy", r)["body"].shape) * 0.02)
+              for r in test[:3]]
+        check("抖动指标：加噪后必须变大",
+              float(np.mean(nj)) > float(np.mean(jt[:3])) * 3,
+              f"{np.mean(jt[:3]):.3f} → {np.mean(nj):.3f} cm/帧")
+
+    print("\n训练组件")
+    import torch
+    import torch.nn as nn
+    from si.train import EMA
+    m = nn.Linear(4, 4)
+    e = EMA([m], 0.9)
+    w0 = m.weight.detach().clone()
+    with torch.no_grad():
+        m.weight.add_(1.0)
+    e.update([m])
+    dd = float((e.shadow[0]["weight"] - w0).abs().mean())
+    check("EMA：decay=0.9 时一步移动 0.1", abs(dd - 0.1) < 1e-4, f"实际 {dd:.4f}")
 
     print("\n采样")
     import torch
