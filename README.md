@@ -253,6 +253,7 @@ notes/                每一环一页笔记
 - [notes/01-条件与模型.md](notes/01-条件与模型.md) —— 条件为什么相加、四种文本模式在测什么、flow matching 的真实数值
 - [notes/02-第一批结果.md](notes/02-第一批结果.md) —— 主基线数字、SemAcc 的分数结构、反事实换词、FOPPAS、**三个被数据否掉的假设**
 - [notes/06-第六环结果-双人.md](notes/06-第六环结果-双人.md) —— 双人三组的结果、我把 BeatAlign 的缺陷造进了自己的指标、以及「指标必须同时有上限和下限」
+- [notes/12-把平滑放进模型里.md](notes/12-把平滑放进模型里.md) —— 从数学上预判、然后被数据证实的一次失败：flow matching 的样本是「噪声 + 速度场积分」，只限制速度场不等于限制样本
 - [notes/11-val-loss-会骗人.md](notes/11-val-loss-会骗人.md) —— **val loss 降 25%、SemAcc 掉 13 个百分点**，而 `best.pt` 一直是按 val loss 选的；已改成同时存 `best_sem.pt`
 - [notes/10-推理后平滑.md](notes/10-推理后平滑.md) —— **零成本的最大改善**：推理后一道 300 ms 的 Savitzky-Golay 滤波，抖动降 73%、MPJPE 降 22%、SemAcc 涨 2.9 个百分点；但 FGD 大幅变差，而且这里面有一部分是指标假象
 - [notes/09-第八环-平滑性.md](notes/09-第八环-平滑性.md) —— 速度损失能压 24% 抖动但要拿 8 个百分点的 SemAcc 去换，λ_v=20 两头都输；抖动仍未解决
