@@ -63,20 +63,25 @@ def main():
 
     # ② 第一环：目标函数 × 数据
     ax = axes[0, 1]
-    a, b = _load("objective"), _load("objective_multi")
+    # 多峰那半用 2000 句版：40 句版方向对但区间重叠，2000 句版配对 p<0.0001
+    # 用**完整 run 名**取，不要用后缀截断——objective_o_flow 和 objective_2k_q_flow
+    # 截到最后一段都是 "flow"，会互相覆盖（这张图第一版就是这么错的）。
+    a, b = _load("objective"), _load("objective_2k")
     if a and b:
-        g = {x["name"].rsplit("_", 2)[-2] + "_" + x["name"].rsplit("_", 1)[-1]: x
-             for x in a + b}
-        keys = ["o_flow", "o_regress", "m_flow", "m_regress"]
-        lb = ["flow\n确定性数据", "回归\n确定性数据", "flow\n多峰数据", "回归\n多峰数据"]
-        have = [(l, g[k]) for l, k in zip(lb, keys) if k in g]
+        by = {x["name"]: x for x in a + b}
+        want = [("flow\n确定性数据", "objective_o_flow"),
+                ("回归\n确定性数据", "objective_o_regress"),
+                ("flow\n2000句多峰", "objective_2k_q_flow"),
+                ("回归\n2000句多峰", "objective_2k_q_regress")]
+        have = [(l, by[k]) for l, k in want if k in by]
         bars(ax, [l for l, _ in have], [x["sem_acc"] * 100 for _, x in have],
              [tuple(c * 100 for c in (bootstrap_ci(x["name"]) or (0, 0)))
               for _, x in have],
              color=[BLUE, ORANGE, BLUE, ORANGE][:len(have)],
              floor=100 / 13, ylab="SemAcc (%)")
     ax.set_title("② 第一环：生成式 vs 确定性\n"
-                 "换成多峰数据后排序翻转（但 CI 重叠）", fontsize=10, loc="left")
+                 "多峰数据上排序翻转，配对 p<0.0001；回归掉到随机基线",
+                 fontsize=10, loc="left")
 
     # ③ 第六环：双人
     ax = axes[0, 2]
