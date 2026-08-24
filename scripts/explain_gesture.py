@@ -13,7 +13,8 @@ from scripts._style import BLUE, GRAY, GREEN, RED, demo_clip, plt, save  # noqa:
 from si.corpus import SEMANTIC_CLASSES, SEMANTIC_LEXICON  # noqa: E402
 from si.gesture_expert import FPS, _envelope, _semantic_offset  # noqa: E402
 from si.pose import CONTROL_NAMES, controls_to_body_feature, home_controls  # noqa: E402
-from si.render import _draw_skeleton, joints_from_body  # noqa: E402
+from si.render import joints_from_body  # noqa: E402
+from si.video import draw  # noqa: E402
 
 
 def atlas():
@@ -23,14 +24,11 @@ def atlas():
     for k, c in enumerate(["静息"] + cls):
         ph = np.linspace(0, 1, 21)
         off = np.zeros((21, len(CONTROL_NAMES))) if c == "静息" else _semantic_offset(c, ph)
-        P = joints_from_body(controls_to_body_feature(home_controls(21) + off))
+        P, R = joints_from_body(controls_to_body_feature(home_controls(21) + off),
+                                return_rot=True)
         for r, (ai, bi) in enumerate([(0, 1), (2, 1)]):
             ax = axes[r, k]
-            _draw_skeleton(ax, P[10], ai, bi, BLUE)
-            ax.set_xlim(-1.05, 1.05); ax.set_ylim(-0.95, 1.15); ax.set_aspect("equal")
-            ax.set_xticks([]); ax.set_yticks([])
-            for sp in ax.spines.values():
-                sp.set_alpha(0.2)
+            draw(ax, P[10], ai, bi, BLUE, lw=2.4, R=R[10])
             if r == 0:
                 ax.set_title(c, fontsize=9.5, color=BLUE if c != "静息" else GRAY)
             else:
@@ -97,13 +95,11 @@ def atlas_gif():
         fig, axes = plt.subplots(1, len(cls), figsize=(1.45 * len(cls), 3.1))
         for k, c in enumerate(cls):
             off = _semantic_offset(c, np.linspace(0, 1, n))[f] * envg[f]
-            P = joints_from_body(controls_to_body_feature(home_controls(1) + off[None]))
+            P, R = joints_from_body(controls_to_body_feature(home_controls(1) + off[None]),
+                                    return_rot=True)
             ax = axes[k]
-            _draw_skeleton(ax, P[0], 0, 1, BLUE)
-            ax.set_xlim(-1.05, 1.05); ax.set_ylim(-0.95, 1.15); ax.set_aspect("equal")
-            ax.set_xticks([]); ax.set_yticks([]); ax.set_title(c, fontsize=8)
-            for sp in ax.spines.values():
-                sp.set_alpha(0.2)
+            draw(ax, P[0], 0, 1, BLUE, lw=2.4, R=R[0])
+            ax.set_title(c, fontsize=8)
         fig.suptitle(f"语义手势的起手—保持—收手   包络 w = {envg[f]:.2f}", fontsize=10)
         fig.tight_layout()
         fig.canvas.draw()
