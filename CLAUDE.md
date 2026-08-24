@@ -61,7 +61,28 @@ token、命令和坑见 `.claude/skills/feishu-doc/SKILL.md`。
 
 ## 约定
 
-- **SemAcc 是唯一的主指标**。val loss 好看不算数；每次消融都要跑完整的采样评测。
-- 一次只改一个变量，改完把同屏对比视频录下来。
-- 每完成 PLAN.md 里的一环，在 `notes/` 下写一页。
+- **SemAcc 是唯一的主指标**。val loss 好看不算数——这不是原则问题，是实测：
+  同一配置从 5000 步训到 10000 步，**val loss 降 25%（一路降到最低），SemAcc 掉 13 个百分点**。
+  训练时开 `--set sem_every=1000`，评测用 `--ckpt best_sem.pt`；
+  `best.pt` 是按 val loss 选的，训久了会选错（见 `notes/11`）。
+- **任何指标进主表之前，先回答三个问题**（这个项目栽过三次）：
+  1. 下限是多少（随机猜 / 同密度随机撒点）？
+  2. 上限是多少（把真值喂进去）？
+  3. 要比的两组，置信区间会不会重叠？
+- **同一个量必须固定同一个测法**。抖动倍数在 8 条句子上是 25 倍、完整测试集上是 14 倍——
+  早期文档就是这么写错的。`scripts/results_table.py` 汇总所有 run 的结果，写文档前先跑一遍核对。
+- **造新数据版本时先量噪声底**：同一条件换随机种子 K 次、两两算距离。
+  不知道下限就读不懂模型的分数（第一环就是这么栽的）。
+- 一次只改一个变量，改完把同屏对比视频录下来（`scripts/make_videos.py`）。
+- 每完成 PLAN.md 里的一环，在 `notes/` 下写一页。**预期和实测不符时，把预期也写下来。**
 - 提交信息用英文，一句话说清改了什么。
+
+## 常用命令
+
+```bash
+python scripts/selfcheck.py       # 改了表示层/专家/指标之后先跑这个
+python scripts/results_table.py   # 汇总所有 run 的评测结果
+python scripts/walkthrough.py     # 逐段打印形状、数值、以及每个指标的上下限
+python scripts/make_videos.py all # 出全部教学视频（带音轨）
+python -m si.eval --run runs/X --smooth 9   # 带推理后平滑的评测（默认关）
+```
