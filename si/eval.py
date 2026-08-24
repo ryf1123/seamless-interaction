@@ -22,7 +22,7 @@ from .features import SpeechTokenizer
 from .flow import sample, sample_long
 from .gesture_expert import detect_beats
 from .metrics import (MotionAE, beat_align, confusion, diversity, frechet,
-                      mpjpe_cm, semantic_accuracy)
+                      jitter, mpjpe_cm, semantic_accuracy)
 from .models.dit import CondEncoder, MotionDiT
 from .train import get_device
 
@@ -253,6 +253,7 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
         samples = [generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w,
                                  seed=1000 + i * 10 + k)[0][:, :258] for k in range(n_div)]
         rows.append({"id": rec["id"], "mpjpe_cm": mpjpe_cm(body_p, body_g),
+                     "jitter": jitter(body_p), "jitter_gt": jitter(body_g),
                      "beat_align": beat_align(body_p, ab),
                      "beat_align_gt": beat_align(body_g, ab),
                      "diversity": diversity(samples),
@@ -275,6 +276,10 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
            "beat_align": float(np.mean([r["beat_align"] for r in rows])),
            "beat_align_gt": float(np.mean([r["beat_align_gt"] for r in rows])),
            "diversity": float(np.mean([r["diversity"] for r in rows])),
+           "jitter": float(np.mean([r["jitter"] for r in rows])),
+           "jitter_gt": float(np.mean([r["jitter_gt"] for r in rows])),
+           "jitter_ratio": float(np.mean([r["jitter"] for r in rows])
+                                 / max(np.mean([r["jitter_gt"] for r in rows]), 1e-9)),
            "sem_acc": float(np.average([r["sem_acc"] for r in ok],
                                        weights=[r["n_events"] for r in ok])),
            "n_events": int(sum(r["n_events"] for r in rows)),

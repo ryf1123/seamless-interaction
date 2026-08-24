@@ -20,6 +20,13 @@
 姊妹项目：[starvla](https://github.com/ryf1123/starvla)（视觉-语言-动作）、
 [sonic](https://github.com/ryf1123/sonic)（人形运控）。
 
+## 一页记分板
+
+![dashboard](docs/figs/17_dashboard.png)
+
+每一格都画出**上限和下限**——只有点估计的图是读不懂的：
+0.42 是好是坏，取决于随机基线是 0.41 还是 0.05。
+
 ## 先看视频（手势这种东西，看动的比看静的清楚）
 
 六段视频都在 [`videos/`](videos/)，带音轨的 `.mp4` 用来正常观看，下面内嵌的是 GIF 版。

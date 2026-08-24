@@ -61,6 +61,19 @@ def beat_align(body: np.ndarray, audio_beats: np.ndarray, fps: float = 30.0,
     return float(np.exp(-d ** 2 / (2 * sigma ** 2)).mean())
 
 
+def jitter(body: np.ndarray) -> float:
+    """时间平滑度：|Δv| 的中位数（cm/帧）。v 是逐帧的平均关节位移。
+
+    取中位数而不是均值，是为了不被单点异常带偏。
+    这是本项目当前最大的质量瓶颈——生成动作是真值的 25 倍。
+    注意本项目的真值是程序生成的，比真人动捕光滑得多，所以「25 倍」不能
+    直接和真实数据上的数字比；但它在**各组模型之间**是可比的。
+    """
+    P = joints(np.asarray(body, dtype=np.float64))[:, _UPPER]
+    v = np.linalg.norm(np.diff(P, axis=0), axis=-1).mean(-1) * 100
+    return float(np.median(np.abs(np.diff(v))))
+
+
 # --------------------------------------------------------------------- 多样性
 def diversity(samples: list[np.ndarray]) -> float:
     """同一条件下若干次采样之间的平均两两 L2（在关节位置上算，单位厘米）。"""

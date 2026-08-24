@@ -20,7 +20,7 @@ plt.rcParams["axes.unicode_minus"] = False
 METRICS = [("sem_acc", "语义命中率 ★", "↑", 100.0, "%"),
            ("fgd", "FGD", "↓", 1.0, ""),
            ("mpjpe_cm", "MPJPE", "↓", 1.0, " cm"),
-           ("beat_align", "节拍对齐", "↑", 1.0, ""),
+           ("jitter_ratio", "抖动 / 真值", "↓", 1.0, "×"),
            ("diversity", "多样性", "—", 1.0, " cm")]
 
 # 第六环（双人）的指标不一样：没有语义手势，主指标是反馈动作的时间对齐
