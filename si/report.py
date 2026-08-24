@@ -99,13 +99,16 @@ def paired_table(runs: list[tuple[str, str]], base: int = 0) -> str:
     lines = [f"| 组 | SemAcc | 与「{base_lb}」的配对差 | 只有它对 / 只有基准对 | McNemar p |",
              "|-|-|-|-|-|"]
     for r, lb in runs:
-        if r == base_run:
-            m = mcnemar(r, base_run)
-            lines.append(f"| **{lb}**（基准） | {m['acc_a']*100:.1f}% | — | — | — |")
-            continue
         m = mcnemar(r, base_run)
         if m is None:
-            lines.append(f"| {lb} | — | — | — | — |"); continue
+            lines.append(f"| {lb} | — | — | — | — |")
+            lines.append("")
+            lines.append(f"> ⚠️ `{r}` 或 `{base_run}` 的 eval.json 里没有 `per_event`，"
+                         f"配对比较需要它。重新跑一次 `python -m si.eval --run runs/{r}` 即可。")
+            continue
+        if r == base_run:
+            lines.append(f"| **{lb}**（基准） | {m['acc_a']*100:.1f}% | — | — | — |")
+            continue
         sig = "**" if m["p"] < 0.05 else ""
         lines.append(f"| {lb} | {m['acc_a']*100:.1f}% | {sig}{m['diff']*100:+.1f} 个百分点{sig} "
                      f"| {m['a_only']} / {m['b_only']} | {sig}{m['p']:.4f}{sig} |")
