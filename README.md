@@ -147,14 +147,19 @@ python scripts/results_table.py # 汇总所有 run 的评测结果（写文档�
 ## 当前最好的配置，以及今天试过的所有东西
 
 ```bash
-python -m si.train --config configs/flow_body.yaml --name best --set steps=8000 sem_every=1000
-python -m si.eval --run runs/best --ckpt best_sem.pt --smooth 9
+python -m si.dataset 2000 --out data/toy2k
+python -m si.train --config configs/flow_body.yaml --name best \
+       --set data=data/toy2k audio_mode=token ema=0.999 steps=12000 sem_every=1000
+python -m si.eval --run runs/best --smooth 9
 ```
 
-| | SemAcc ★ | MPJPE | 抖动 / 真值 |
-|---|---|---|---|
-| 起点（Mel + 8000 步） | 73.0 % | 9.53 cm | 14.17× |
-| **+ 推理后 SG 滤波（窗口 9）** | **75.9 %** | **7.40 cm** | **3.84×** |
+| | **SemAcc ★** | 95% 区间 | MPJPE | 抖动 / 真值 |
+|---|---|---|---|---|
+| 起点（400 句 / Mel / 8000 步） | 73.0 % | [65.3, 79.3]（40 句测试集） | 9.53 cm | 14.17× |
+| 2000 句 / token / 12000 步 + EMA | 70.3 % | [66.8, 73.8]（200 句测试集） | 10.02 cm | 16.43× |
+| **↑ + 推理后 SG 滤波（窗口 9）** | **76.1 %** | **[73.0, 79.1]** | **7.43 cm** | **4.36×** |
+
+平滑的提升在同一批 200 条句子上配对比较是 **+5.8 个百分点 [+2.5, +9.1]**，区间不含 0。
 
 **今天唯一奏效的是那个零成本的后处理步骤。训练侧的每一个想法都是中性或负面的：**
 
@@ -166,6 +171,7 @@ python -m si.eval --run runs/best --ckpt best_sem.pt --smooth 9
 | Huber 重建损失 | 无额外贡献 |
 | 离散语音 token 条件 | 同步数下 FGD 好 13 倍，但训久了 Mel 追上来 |
 | 训练更久（5000 → 10000 步） | **有害**：SemAcc 72.3 % → 59.1 %，而 val loss 降 25% |
+| 数据量 ×5（400 → 2000 句） | SemAcc 无可测变化；但**置信区间减半**（14.0 → 7.0 个百分点），FGD 好到 0.130 |
 | 模型内低通核（噪声未处理） | **有害**：抖动反涨到 22.74×（对 flow matching 的误解，见 notes/12） |
 | 推理后 Savitzky-Golay 滤波 | ✅ **抖动 −73%，MPJPE −22%，SemAcc +2.9** |
 
@@ -290,6 +296,7 @@ notes/                每一环一页笔记
 - [notes/01-条件与模型.md](notes/01-条件与模型.md) —— 条件为什么相加、四种文本模式在测什么、flow matching 的真实数值
 - [notes/02-第一批结果.md](notes/02-第一批结果.md) —— 主基线数字、SemAcc 的分数结构、反事实换词、FOPPAS、**三个被数据否掉的假设**
 - [notes/06-第六环结果-双人.md](notes/06-第六环结果-双人.md) —— 双人三组的结果、我把 BeatAlign 的缺陷造进了自己的指标、以及「指标必须同时有上限和下限」
+- [notes/13-数据量.md](notes/13-数据量.md) —— 数据翻五倍：模型没变好，但置信区间减半；以及 EMA 的作用完全取决于有没有过拟合
 - [notes/12-把平滑放进模型里.md](notes/12-把平滑放进模型里.md) —— 从数学上预判、然后被数据证实的一次失败：flow matching 的样本是「噪声 + 速度场积分」，只限制速度场不等于限制样本
 - [notes/11-val-loss-会骗人.md](notes/11-val-loss-会骗人.md) —— **val loss 降 25%、SemAcc 掉 13 个百分点**，而 `best.pt` 一直是按 val loss 选的；已改成同时存 `best_sem.pt`
 - [notes/10-推理后平滑.md](notes/10-推理后平滑.md) —— **零成本的最大改善**：推理后一道 300 ms 的 Savitzky-Golay 滤波，抖动降 73%、MPJPE 降 22%、SemAcc 涨 2.9 个百分点；但 FGD 大幅变差，而且这里面有一部分是指标假象
