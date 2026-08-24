@@ -231,14 +231,15 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
            "n_gt_nod": int(sum(r["n_gt_nod"] for r in rows)),
            "n_pred_nod": int(sum(r["n_pred_nod"] for r in rows)),
            "per_clip": rows}
-    Path(run, "eval.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
+    # out_name 可以改名，避免带平滑/原始权重的结果覆盖掉主 eval.json
+    Path(run, out_name).write_text(json.dumps(out, ensure_ascii=False, indent=1))
     return out
 
 
 def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 3,
              device: str = "mps", max_clips: int | None = None,
              long: bool = False, ckpt: str = "best.pt", smooth: int = 0,
-             raw: bool = False) -> dict:
+             raw: bool = False, out_name: str = "eval.json") -> dict:
     if yaml.safe_load(Path(run, "config.yaml").read_text()).get("dataset") == "dyadic":
         return evaluate_dyadic(run, steps, cfg_w, device, max_clips, ckpt)
     dev = get_device(device)
@@ -298,7 +299,8 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
            "objective": cfg["objective"], "smooth": smooth, "raw_weights": raw,
            "confusion": confusion(pairs).tolist(), "classes": SEMANTIC_CLASSES,
            "per_clip": rows}
-    Path(run, "eval.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
+    # out_name 可以改名，避免带平滑/原始权重的结果覆盖掉主 eval.json
+    Path(run, out_name).write_text(json.dumps(out, ensure_ascii=False, indent=1))
     return out
 
 
@@ -320,9 +322,8 @@ def main():
     ap.add_argument("--video", type=int, default=0, help="额外渲染前 N 条对比视频")
     a = ap.parse_args()
     r = evaluate(a.run, steps=a.steps, cfg_w=a.cfg, max_clips=a.max_clips,
-                 long=a.long, ckpt=a.ckpt, smooth=a.smooth, raw=a.raw)
-    if a.out:
-        Path(a.run, a.out).write_text(json.dumps(r, ensure_ascii=False, indent=1))
+                 long=a.long, ckpt=a.ckpt, smooth=a.smooth, raw=a.raw,
+                 out_name=a.out or "eval.json")
     if r.get("dataset") == "dyadic":
         print(f"\n{'='*62}\n{r['run']}  (partner={r['partner']})")
         print(f"  FGD              {r['fgd']:8.3f}   ↓")
