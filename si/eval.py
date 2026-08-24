@@ -19,7 +19,7 @@ import yaml
 from .corpus import SEMANTIC_CLASSES
 from .data_torch import AUDIO_DIMS, MotionData, build_tokenizer
 from .features import SpeechTokenizer
-from .flow import sample, sample_long
+from .flow import sample, sample_long, savgol_smooth
 from .gesture_expert import detect_beats
 from .metrics import (MotionAE, beat_align, beat_align_chance, confusion,
                       diversity, frechet, jitter, mpjpe_cm, semantic_accuracy)
@@ -74,7 +74,7 @@ def _load_dyadic(run: Path, cfg: dict, ckpt: str):
 
 @torch.no_grad()
 def generate_clip(cfg, ds, enc, model, rec, dev, steps=25, cfg_w=1.5, seed=0,
-                  long: bool = False):
+                  long: bool = False, smooth: int = 0):
     """生成一整句。长于训练窗口时走 FOPPAS 分段。"""
     d = ds.full_clip(rec)
     audio = d["audio"][None].to(dev); wid = d["word_ids"][None].to(dev)
@@ -91,7 +91,12 @@ def generate_clip(cfg, ds, enc, model, rec, dev, steps=25, cfg_w=1.5, seed=0,
     else:
         g = torch.Generator(device=dev).manual_seed(seed)
         out = sample(model, cond, spk, steps=steps, cfg=cfg_w, generator=g)
-    return ds.denorm(out[0].cpu().numpy()), d
+    m = ds.denorm(out[0].cpu().numpy())
+    if smooth:
+        # 只平滑身体那 258 维；表情那 137 维不是旋转，不能走同一套正交化
+        m = np.concatenate([savgol_smooth(m[:, :258], smooth), m[:, 258:]], 1) \
+            if m.shape[1] > 258 else savgol_smooth(m, smooth)
+    return m, d
 
 
 @torch.no_grad()
@@ -231,7 +236,7 @@ def evaluate_dyadic(run: str | Path, steps: int = 25, cfg_w: float = 1.5,
 
 def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 3,
              device: str = "mps", max_clips: int | None = None,
-             long: bool = False, ckpt: str = "best.pt") -> dict:
+             long: bool = False, ckpt: str = "best.pt", smooth: int = 0) -> dict:
     if yaml.safe_load(Path(run, "config.yaml").read_text()).get("dataset") == "dyadic":
         return evaluate_dyadic(run, steps, cfg_w, device, max_clips, ckpt)
     dev = get_device(device)
@@ -243,7 +248,8 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
 
     rows, feats_p, feats_g, pairs = [], [], [], []
     for i, rec in enumerate(recs):
-        gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w, seed=i, long=long)
+        gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w, seed=i,
+                               long=long, smooth=smooth)
         gt = ds.denorm(d["motion"].numpy())
         body_p, body_g = gen[:, :258], gt[:, :258]
         clip = np.load(Path(cfg["data"]) / rec["file"])
@@ -251,7 +257,8 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
         acc, pr = semantic_accuracy(body_p, rec["events"])
         pairs += pr
         samples = [generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w,
-                                 seed=1000 + i * 10 + k)[0][:, :258] for k in range(n_div)]
+                                 seed=1000 + i * 10 + k, smooth=smooth)[0][:, :258]
+                   for k in range(n_div)]
         rows.append({"id": rec["id"], "mpjpe_cm": mpjpe_cm(body_p, body_g),
                      "jitter": jitter(body_p), "jitter_gt": jitter(body_g),
                      "beat_align": beat_align(body_p, ab),
@@ -286,7 +293,7 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
                                        weights=[r["n_events"] for r in ok])),
            "n_events": int(sum(r["n_events"] for r in rows)),
            "audio_mode": cfg["audio_mode"], "text_mode": cfg["text_mode"],
-           "objective": cfg["objective"],
+           "objective": cfg["objective"], "smooth": smooth,
            "confusion": confusion(pairs).tolist(), "classes": SEMANTIC_CLASSES,
            "per_clip": rows}
     Path(run, "eval.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
@@ -301,10 +308,13 @@ def main():
     ap.add_argument("--max-clips", type=int, default=None)
     ap.add_argument("--ckpt", default="best.pt")
     ap.add_argument("--long", action="store_true")
+    ap.add_argument("--smooth", type=int, default=0,
+                    help="推理后 Savitzky-Golay 平滑的窗口（帧）。默认 0 = 关。"
+                         "实测 9（300 ms）是甜点：抖动降 73%%、MPJPE 降 22%%、SemAcc 不降")
     ap.add_argument("--video", type=int, default=0, help="额外渲染前 N 条对比视频")
     a = ap.parse_args()
     r = evaluate(a.run, steps=a.steps, cfg_w=a.cfg, max_clips=a.max_clips,
-                 long=a.long, ckpt=a.ckpt)
+                 long=a.long, ckpt=a.ckpt, smooth=a.smooth)
     if r.get("dataset") == "dyadic":
         print(f"\n{'='*62}\n{r['run']}  (partner={r['partner']})")
         print(f"  FGD              {r['fgd']:8.3f}   ↓")
@@ -319,7 +329,8 @@ def main():
         print(f"  （旧的软对齐分     {r['backchannel_align']:8.3f}，只奖励召回，仅供参考）")
         print(f"  生成的点头 {r['n_pred_nod']} 个 / 真值 {r['n_gt_nod']} 个")
         return
-    print(f"\n{'='*62}\n{r['run']}  ({r['audio_mode']} / {r['text_mode']} / {r['objective']})")
+    sm = f" / 平滑窗口 {r['smooth']}" if r.get("smooth") else ""
+    print(f"\n{'='*62}\n{r['run']}  ({r['audio_mode']} / {r['text_mode']} / {r['objective']}{sm})")
     print(f"  FGD          {r['fgd']:8.3f}   ↓")
     print(f"  MPJPE        {r['mpjpe_cm']:8.2f} cm ↓")
     print(f"  BeatAlign    {r['beat_align']:8.3f}   ↑   (真值 {r['beat_align_gt']:.3f}，"
