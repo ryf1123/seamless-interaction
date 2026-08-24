@@ -144,6 +144,33 @@ python scripts/selfcheck.py    # 跑一遍所有不变量（改了表示层/专�
 python scripts/results_table.py # 汇总所有 run 的评测结果（写文档前核对数字有没有过期）
 ```
 
+## 当前最好的配置，以及今天试过的所有东西
+
+```bash
+python -m si.train --config configs/flow_body.yaml --name best --set steps=8000 sem_every=1000
+python -m si.eval --run runs/best --ckpt best_sem.pt --smooth 9
+```
+
+| | SemAcc ★ | MPJPE | 抖动 / 真值 |
+|---|---|---|---|
+| 起点（Mel + 8000 步） | 73.0 % | 9.53 cm | 14.17× |
+| **+ 推理后 SG 滤波（窗口 9）** | **75.9 %** | **7.40 cm** | **3.84×** |
+
+**今天唯一奏效的是那个零成本的后处理步骤。训练侧的每一个想法都是中性或负面的：**
+
+| 试过的 | 结果 |
+|---|---|
+| 推理参数（CFG × ODE 步数，12 组） | 无效 |
+| 权重 EMA | 无效（且作用取决于有没有过拟合） |
+| 速度损失 λ_v = 5 / 20 | 降 24% 抖动，代价 SemAcc −8；λ_v=20 两头都输 |
+| Huber 重建损失 | 无额外贡献 |
+| 离散语音 token 条件 | 同步数下 FGD 好 13 倍，但训久了 Mel 追上来 |
+| 训练更久（5000 → 10000 步） | **有害**：SemAcc 72.3 % → 59.1 %，而 val loss 降 25% |
+| 模型内低通核（噪声未处理） | **有害**：抖动反涨到 22.74×（对 flow matching 的误解，见 notes/12） |
+| 推理后 Savitzky-Golay 滤波 | ✅ **抖动 −73%，MPJPE −22%，SemAcc +2.9** |
+
+清单和依据见 [docs/improve.md](docs/improve.md)。
+
 ## 结果
 
 完整讨论见 `notes/`，这里只列结论和关键数字。**每个数都配了上限和下限**——
