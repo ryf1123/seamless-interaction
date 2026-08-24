@@ -211,8 +211,37 @@ def dyadic():
     return m
 
 
+def smoothing():
+    """真值 / 原始生成 / 平滑后，三路同屏——最直观地看后处理的效果。"""
+    from si.eval import generate_clip, load_run
+    from si.flow import savgol_smooth
+    from si.metrics import jitter as jt
+    from si.train import get_device
+    dev = get_device("mps")
+    cfg, ds, enc, model = load_run("runs/flow_body")
+    enc.to(dev).eval(); model.to(dev).eval()
+    rec = ds.recs[1]
+    gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps=25, seed=0)
+    gt = ds.denorm(d["motion"].numpy())[:, :258]
+    sm = savgol_smooth(gen[:, :258], 9)
+    clip = np.load(Path(cfg["data"]) / rec["file"])
+    lb = [f"真值  |Δv|={jt(gt):.2f}",
+          f"生成（原始）  |Δv|={jt(gen[:, :258]):.2f}",
+          f"生成 + SG 窗口 9  |Δv|={jt(sm):.2f}"]
+    p = render_clip([gt, gen[:, :258], sm], lb, OUT / "07_smoothing",
+                    audio=clip["audio"], words=list(rec["words"]),
+                    word_start=rec["word_start"], word_end=rec["word_end"],
+                    events=rec["events"], views=((0, 1, ""),),
+                    title="推理后一道 300 ms 的 Savitzky-Golay 滤波：看手部拖尾的毛刺", dpi=88)
+    m = mux(p["mp4"], clip["audio"], OUT / "07_smoothing.mp4")
+    _copy_gif(p["gif"], "19_smoothing.gif")
+    print("写出", m, p["gif"])
+    return m
+
+
 JOBS = {"atlas": atlas, "expert": expert, "ablation": ablation,
-        "counterfactual": counterfactual, "jitter": jitter, "dyadic": dyadic}
+        "counterfactual": counterfactual, "jitter": jitter, "dyadic": dyadic,
+        "smoothing": smoothing}
 
 if __name__ == "__main__":
     which = sys.argv[1:] or ["all"]
