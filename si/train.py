@@ -53,6 +53,10 @@ DEFAULTS = dict(
                           # 必须开：否则 ε 的高频成分模型够不着，整个想法失效。
     smooth_kind="hann",   # 输出端低通核的形状：hann（简单加权平均，会压矮峰）
                           # 或 savgol（局部二阶多项式拟合，为「保住峰」设计）。见 notes/16。
+    basis_k=0,            # 学习基的维度（0 = 关）。用训练集学一个时间轴上的正交基，
+                          # 把噪声、训练目标、模型输出都投到前 K 维子空间。
+                          # 和 SG 的区别：P = U Uᵀ **幂等**，是真正的子空间约束。
+                          # 天花板已量：K=32 → 93.4%（同维度的 DCT 基只有 73.0%），K=48 → 100%。
     target_smooth=0,      # 把**训练目标**也用同样的核投影一遍（0 = 关）。
                           # 只投影输出、不投影目标的话，模型要在通带外做无用功——
                           # notes/12 那次失败就是这么来的。
@@ -60,6 +64,16 @@ DEFAULTS = dict(
     smooth_out=0,         # 模型输出端固定低通核的宽度（帧，0 = 关）。
                           # 把「平滑」写进函数类，训练时模型能补偿它。
 )
+
+
+def _basis_tensor(cfg: dict):
+    """按 basis_k 取学习基的前 K 列；0 表示不用。"""
+    k = cfg.get("basis_k", 0)
+    if not k:
+        return None
+    from .basis import load_basis
+    U = load_basis(cfg["data"], cfg["window"])
+    return torch.tensor(U[:, :k], dtype=torch.float32)
 
 
 def get_device(name: str) -> torch.device:
@@ -76,7 +90,8 @@ def build_all(cfg: dict):
     tok = build_tokenizer(cfg["data"], cfg["n_tokens"]) if cfg["audio_mode"] == "token" else None
     kw = dict(root=cfg["data"], window=cfg["window"], audio_mode=cfg["audio_mode"],
               text_mode=cfg["text_mode"], target=cfg["target"], tokenizer=tok,
-              target_smooth=cfg.get("target_smooth", 0))
+              target_smooth=cfg.get("target_smooth", 0),
+              basis_k=cfg.get("basis_k", 0))
     tr = MotionData(split="train", **kw)
     va = MotionData(split="val", stats=tr.stats, vocab=tr.vocab, **kw)
     audio_dim = AUDIO_DIMS.get(cfg["audio_mode"], 1)
@@ -86,7 +101,8 @@ def build_all(cfg: dict):
     model = MotionDiT(tr[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
                       cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8,
                       n_speakers=n_spk, smooth_out=cfg.get("smooth_out", 0),
-                      smooth_kind=cfg.get("smooth_kind", "hann"))
+                      smooth_kind=cfg.get("smooth_kind", "hann"),
+                      basis=_basis_tensor(cfg))
     return tr, va, enc, model, tok
 
 

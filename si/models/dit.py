@@ -103,7 +103,8 @@ class MotionDiT(nn.Module):
 
     def __init__(self, motion_dim: int, cond_dim: int, d: int = 256, depth: int = 6,
                  heads: int = 4, max_len: int = 256, n_speakers: int = 8,
-                 smooth_out: int = 0, smooth_kind: str = "hann"):
+                 smooth_out: int = 0, smooth_kind: str = "hann",
+                 basis: "torch.Tensor | None" = None):
         super().__init__()
         self.motion_dim, self.cond_dim, self.max_len = motion_dim, cond_dim, max_len
         self.x_proj = nn.Linear(motion_dim, d)
@@ -127,6 +128,12 @@ class MotionDiT(nn.Module):
         # 所以平滑 v 等价于平滑运动。核固定不训练，用 Hann 窗归一化。
         # 和事后滤波的区别：训练时模型能**补偿**这个核（它知道输出会被滤），
         # 而不是训完再被动地滤一遍。
+        # 学习基的输出投影：P = U Uᵀ 是**幂等**的，所以它真的把输出关在子空间里
+        # （不像 SG 核——保住峰靠负瓣，因此不是投影，约束不住轨迹，见 notes/16）
+        if basis is not None:
+            self.register_buffer("basis", basis)
+        else:
+            self.basis = None
         self.smooth_out = smooth_out
         self.smooth_kind = smooth_kind
         if smooth_out and smooth_out >= 3:
@@ -142,6 +149,9 @@ class MotionDiT(nn.Module):
         for blk in self.blocks:
             h = blk(h, g)
         out = self.out(self.out_norm(h))
+        if self.basis is not None:
+            from ..basis import project_torch
+            out = project_torch(out, self.basis)
         if self.smooth_out and self.smooth_out >= 3:
             pad = self.smooth_out // 2
             y = out.transpose(1, 2).reshape(-1, 1, T)                 # (B*Dm, 1, T)

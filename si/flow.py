@@ -99,6 +99,11 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
     x = (lowpass_noise((B, T, model.motion_dim), dev, noise_smooth, generator, noise_kind)
          if noise_smooth else
          torch.randn(B, T, model.motion_dim, device=dev, generator=generator))
+    if getattr(model, "basis", None) is not None:
+        # 噪声也要投影：flow matching 的样本是 ε + ∫v dt，
+        # 只投影 v 的话 ε 的子空间外成分没人能抵消（notes/12 那次失败就是这么来的）
+        from .basis import project_torch
+        x = project_torch(x, model.basis)
     dt = 1.0 / steps
     null = torch.full_like(spk, model.spk.num_embeddings - 1 if null_spk is None else null_spk)
     for i in range(steps):
@@ -114,6 +119,9 @@ def sample(model, cond: torch.Tensor, spk: torch.Tensor, steps: int = 25,
             eps = (lowpass_noise(x.shape, dev, noise_smooth, generator, noise_kind)
                    if noise_smooth else
                    torch.randn(x.shape, device=dev, generator=generator))
+            if getattr(model, "basis", None) is not None:
+                from .basis import project_torch
+                eps = project_torch(eps, model.basis)
             x_known = tt * known + (1.0 - (1.0 - SIGMA_MIN) * tt) * eps
             x = torch.where(known_mask[..., None].bool(), x_known, x)
     if known is not None:

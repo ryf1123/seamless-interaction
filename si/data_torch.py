@@ -31,10 +31,11 @@ class MotionData(Dataset):
                  target: str = "body", stride: int | None = None,
                  stats: dict | None = None, vocab: dict | None = None,
                  tokenizer: SpeechTokenizer | None = None, seed: int = 0,
-                 target_smooth: int = 0):
+                 target_smooth: int = 0, basis_k: int = 0):
         self.root = Path(root)
         self.data_root = str(root)
         self.target_smooth = target_smooth
+        self.basis_k = basis_k
         self.meta = load_index(root)
         self.fps = self.meta["fps"]
         self.classes = self.meta["classes"]
@@ -63,6 +64,13 @@ class MotionData(Dataset):
     # ---------------------------------------------------------------- 特征
     def _motion(self, rec) -> np.ndarray:
         d = self.cache.clip(rec)
+        if getattr(self, "basis_k", 0):
+            # 把训练目标也投到同一个子空间。目标不投影的话，模型要在子空间外
+            # 做永远做不完的无用功（notes/12）。
+            from .basis import load_basis, project_np
+            U = load_basis(self.data_root, self.window)
+            b = project_np(d["body"].astype(np.float64), U, self.basis_k)
+            d = {**d, "body": b.astype(np.float32)}
         if getattr(self, "target_smooth", 0):
             # 把**训练目标**也投影一遍。踩过的坑（notes/12）：只给模型输出加低通核、
             # 目标还是原始信号，模型就得在通带外做永远做不完的无用功。

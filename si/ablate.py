@@ -87,6 +87,14 @@ SUITES: dict[str, list[dict]] = {
         {"name": "sg9", "desc": "SG 投影 窗口 9（天花板 86.1%）", "smooth_out": 9,
          "smooth_kind": "savgol", "target_smooth": 9},
     ],
+    # 学习基投影：用训练集学一个时间轴正交基，把噪声/目标/输出都投到前 K 维。
+    # 这是 notes/16 机制修正版指向的方向——正交 ⇒ 幂等 ⇒ 真能约束函数类
+    # （SG 保住峰靠负瓣，因此不是投影，约束不住）。
+    # 天花板已量：K=32 → 93.4%，K=48 → 100%（同维度 DCT 基只有 73.0% / 94.2%）。
+    "basis": [
+        {"name": "k32", "desc": "学习基 K=32（天花板 93.4%）", "basis_k": 32},
+        {"name": "k48", "desc": "学习基 K=48（天花板 100%）", "basis_k": 48},
+    ],
     # 第三环：音频表示
     "audio": [
         {"name": "a_mel", "desc": "80 维 log-Mel", "audio_mode": "mel"},
@@ -101,6 +109,7 @@ SUITES: dict[str, list[dict]] = {
 BASE_CONFIG = {"dyadic": "configs/dyadic.yaml",
                "acc": "configs/token_base.yaml",
                "sgproj": "configs/token_base.yaml",
+               "basis": "configs/token_base.yaml",
                "objective_2k": "configs/flow_body_2k_multi.yaml",
                "text_2k": "configs/flow_body_2k.yaml",
                "objective_multi": "configs/flow_body_multi.yaml"}

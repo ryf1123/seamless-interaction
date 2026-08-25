@@ -24,7 +24,7 @@ from .gesture_expert import detect_beats
 from .metrics import (MotionAE, beat_align, beat_align_chance, confusion,
                       diversity, frechet, jitter, mpjpe_cm, semantic_accuracy)
 from .models.dit import CondEncoder, MotionDiT
-from .train import get_device
+from .train import _basis_tensor, get_device
 
 
 def load_run(run: str | Path, ckpt: str = "best.pt", raw: bool = False):
@@ -42,7 +42,8 @@ def load_run(run: str | Path, ckpt: str = "best.pt", raw: bool = False):
     ds = MotionData(root=cfg["data"], split="test", window=cfg["window"],
                     audio_mode=cfg["audio_mode"], text_mode=cfg["text_mode"],
                     target=cfg["target"], stats=stats, vocab=vocab, tokenizer=tok,
-                    target_smooth=cfg.get("target_smooth", 0))
+                    target_smooth=cfg.get("target_smooth", 0),
+                    basis_k=cfg.get("basis_k", 0))
     ck = torch.load(run / ckpt, map_location="cpu", weights_only=False)
     audio_dim = AUDIO_DIMS.get(cfg["audio_mode"], 1)
     enc = CondEncoder(audio_dim, len(vocab) + 1, cfg["d_cond"], cfg["d_word"],
@@ -51,7 +52,8 @@ def load_run(run: str | Path, ckpt: str = "best.pt", raw: bool = False):
     model = MotionDiT(ds[0]["motion"].shape[-1], cfg["d_cond"], cfg["d_model"],
                       cfg["depth"], cfg["heads"], max_len=cfg["window"] + 8,
                       n_speakers=n_spk, smooth_out=cfg.get("smooth_out", 0),
-                      smooth_kind=cfg.get("smooth_kind", "hann"))
+                      smooth_kind=cfg.get("smooth_kind", "hann"),
+                      basis=_basis_tensor(cfg))
     # 训练时开了 EMA 的话，`model` 存的就是 EMA 权重；raw=True 取未平均的原始权重
     mk = "model_raw" if (raw and "model_raw" in ck) else "model"
     ek = "enc_raw" if (raw and "enc_raw" in ck) else "enc"
