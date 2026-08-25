@@ -249,12 +249,17 @@ def best():
     from si.train import get_device
     from si.corpus import SEMANTIC_CLASSES
     from si.metrics import classify_pose
-    run = "runs/v2_2k" if Path("runs/v2_2k/best.pt").exists() else "runs/flow_body"
+    for cand in ("runs/final_2k_basis", "runs/v2_2k", "runs/flow_body"):
+        if Path(cand, "best.pt").exists():
+            run = cand
+            break
     dev = get_device("mps")
     cfg, ds, enc, model = load_run(run)
     enc.to(dev).eval(); model.to(dev).eval()
     rec = max(ds.recs[:40], key=lambda r: len(r["events"]))
-    gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps=25, seed=0, smooth=9)
+    # 学习基那一版自己就带平滑，再叠事后滤波反而掉分（82.2 → 80.1），所以不叠
+    sm = 0 if cfg.get("basis_k") else 9
+    gen, d = generate_clip(cfg, ds, enc, model, rec, dev, steps=25, seed=0, smooth=sm)
     gt = ds.denorm(d["motion"].numpy())[:, :258]
     acc, _ = semantic_accuracy(gen[:, :258], rec["events"])
     clip = np.load(Path(cfg["data"]) / rec["file"])
@@ -266,12 +271,12 @@ def best():
             note[t] = f"「{e['word']}」应为 {e['cls']} → 生成判为 {c}（{ok}）"
     p = render_clip([gt, gen[:, :258]],
                     [f"真值 |Δv|={jt(gt):.2f}",
-                     f"生成+SG9 |Δv|={jt(gen[:, :258]):.2f}"],
+                     f"生成 |Δv|={jt(gen[:, :258]):.2f}"],
                     OUT / "08_best", audio=clip["audio"], words=list(rec["words"]),
                     word_start=rec["word_start"], word_end=rec["word_end"],
                     events=rec["events"], per_frame_note=note,
-                    title=f"当前最好的配置：这一句的语义命中 {acc*100:.0f}%"
-                          f"（全测试集 76.1%）", dpi=90)
+                    title=f"当前最好的配置（学习基 K=48）：这一句的语义命中 {acc*100:.0f}%"
+                          f"（全测试集 82.2%）", dpi=90)
     m = mux(p["mp4"], clip["audio"], OUT / "08_best.mp4")
     _copy_gif(p["gif"], "20_best.gif")
     print("写出", m, p["gif"])
