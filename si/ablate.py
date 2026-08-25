@@ -97,6 +97,15 @@ SUITES: dict[str, list[dict]] = {
         {"name": "k32", "desc": "学习基 K=32（天花板 93.4%）", "basis_k": 32},
         {"name": "k48", "desc": "学习基 K=48（天花板 100%）", "basis_k": 48},
     ],
+    # 第六环重跑：加上学习基。原因见 notes/06——三组反馈 F1 全落在同密度随机基线上
+    # （0.41 vs 0.41），但**不依赖检测器**的耦合度诊断显示信息其实部分流进来了。
+    # 当时的解释是「被自身抖动造成的假阳性点头埋了」（生成 431–467 个点头对 187 个真值）。
+    # 学习基把抖动降了 63%，如果那个解释对，F1 应该能浮出基线。
+    "dyadic_basis": [
+        {"name": "b_none", "desc": "Monadic + 学习基", "partner": "none", "basis_k": 48},
+        {"name": "b_audio", "desc": "Dyadic + 学习基", "partner": "audio", "basis_k": 48},
+        {"name": "b_av", "desc": "AV Dyadic + 学习基", "partner": "av", "basis_k": 48},
+    ],
     # 第三环：音频表示
     "audio": [
         {"name": "a_mel", "desc": "80 维 log-Mel", "audio_mode": "mel"},
@@ -109,6 +118,7 @@ SUITES: dict[str, list[dict]] = {
 
 
 BASE_CONFIG = {"dyadic": "configs/dyadic.yaml",
+               "dyadic_basis": "configs/dyadic.yaml",
                "acc": "configs/token_base.yaml",
                "sgproj": "configs/token_base.yaml",
                "basis": "configs/token_base.yaml",
