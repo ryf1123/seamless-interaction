@@ -283,8 +283,12 @@ def evaluate(run: str | Path, steps: int = 25, cfg_w: float = 1.5, n_div: int = 
         samples = [generate_clip(cfg, ds, enc, model, rec, dev, steps, cfg_w,
                                  seed=1000 + i * 10 + k, smooth=smooth)[0][:, :258]
                    for k in range(n_div)]
+        # 抖动的参照必须是**没被平滑过的**真值。踩过的坑：训练时开了 target_smooth
+        # 之后，ds 里的 motion 已经是平滑过的目标，拿它当参照会把抖动倍数算小一半
+        # （sg9 报 5.09× 实际是 10.76×）——指标的参照物被配置悄悄改掉了。
+        raw_gt = np.load(Path(cfg["data"]) / rec["file"])["body"].astype(np.float64)
         rows.append({"id": rec["id"], "mpjpe_cm": mpjpe_cm(body_p, body_g),
-                     "jitter": jitter(body_p), "jitter_gt": jitter(body_g),
+                     "jitter": jitter(body_p), "jitter_gt": jitter(raw_gt[:, :258]),
                      "beat_align": beat_align(body_p, ab),
                      "beat_align_gt": beat_align(body_g, ab),
                      "beat_align_chance": beat_align_chance(body_p, ab, len(body_p), seed=i),
